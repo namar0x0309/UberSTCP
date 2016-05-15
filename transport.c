@@ -20,6 +20,16 @@
 #include "stcp_api.h"
 #include "transport.h"
 
+/*
+SYN-RECEIVED STATE
+      ESTABLISHED STATE
+      FIN-WAIT-1 STATE
+      FIN-WAIT-2 STATE
+      CLOSE-WAIT STATE
+      CLOSING STATE
+      LAST-ACK STATE
+      TIME-WAIT STATE
+*/
 
 enum { 
     CSTATE_ESTABLISHED,

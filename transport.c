@@ -25,6 +25,7 @@
 #define OPTIONS_LEN         40
 #define CONGESTION_WIN_SIZE 3072
 #define SYN_REC_DATA        10
+#define TIME_WAIT           4       // seconds
 /*
 SYN-RECEIVED STATE
       FIN-WAIT-1 STATE
@@ -108,6 +109,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         {
             switch( ctx->connection_state )
             {
+                // get syn and then send the syn_ack after.
                 case CSTATE_WAIT_FOR_SYN:
                     if( attempts == 0 )
                     {
@@ -172,6 +174,23 @@ void transport_init(mysocket_t sd, bool_t is_active)
                     }
                     break;
                 
+                // after getting ack, continue in receiving data.
+                case CSTATE_WAIT_FOR_ACK:
+                    printf( "\nWhere's the ACK" );
+                    
+                    gettimeofday( &cur_time, NULL );
+                    abs_time = (struct timespec* ) (&cur_time );
+                    abs_time->tv_sec += TIME_WAIT; // wait for next packet
+                    wait_flags = 0 | NETWORK_DATA;
+                    
+                    event = stcp_wait_for_event( ctx->sd, wait_flags, abs_time );
+                    
+                    if( event & NETWORK_DATA )
+                    {
+                        
+                        
+                    }
+                    break;
             }
         }
     }

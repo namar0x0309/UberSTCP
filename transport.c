@@ -33,6 +33,8 @@ typedef struct
     tcp_seq initial_sequence_num;
 
     /* any other connection-wide global variables go here */
+    mysocket_t sd;
+    
 } context_t;
 
 
@@ -46,12 +48,24 @@ static void control_loop(mysocket_t sd, context_t *ctx);
  */
 void transport_init(mysocket_t sd, bool_t is_active)
 {
+    unsigned int event, wait_flags;
+    STCPHeader *recv_h, *syn_h, *syn_ack_h, *ack_h;
+    char *segt, *app_data;
+    ssize_t sgt_len; 
+    size_t app_data_len;
+    struct timespec *abs_time
+    struct timeval  cur_time;
+    int count;
+    
     context_t *ctx;
 
-    ctx = (context_t *) calloc(1, sizeof(context_t));
+    ctx = (context_t    *) calloc(1, sizeof(context_t));
     assert(ctx);
 
     generate_initial_seq_num(ctx);
+    ctx->sd = sd;
+    
+    
 
     /* XXX: you should send a SYN packet here if is_active, or wait for one
      * to arrive if !is_active.  after the handshake completes, unblock the

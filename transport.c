@@ -22,18 +22,24 @@
 
 /*
 SYN-RECEIVED STATE
-      ESTABLISHED STATE
       FIN-WAIT-1 STATE
       FIN-WAIT-2 STATE
       CLOSE-WAIT STATE
-      CLOSING STATE
       LAST-ACK STATE
       TIME-WAIT STATE
 */
 
 enum { 
+    CSTATE_SEND_SYN,
+    CSTATE_WAIT_FOR_SYN,
+    CSTATE_WAIT_FOR_SYN_ACK,
+    CSTATE_WAIT_FOR_ACK,
     CSTATE_ESTABLISHED,
-    CSTATE_CLOSED };    /* you should have more states */
+    CSTATE_SEND_FIN,
+    CSTATE_FIN_RECVD,
+    CSTATE_WAIT_FOR_FIN,
+    CSTATE_CLOSED 
+};    /* you should have more states */
 
 
 /* this structure is global to a mysocket descriptor */

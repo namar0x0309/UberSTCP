@@ -20,6 +20,8 @@
 #include "stcp_api.h"
 #include "transport.h"
 
+#define TCPHEADER_OFFSET 6
+
 /*
 SYN-RECEIVED STATE
       FIN-WAIT-1 STATE
@@ -28,7 +30,6 @@ SYN-RECEIVED STATE
       LAST-ACK STATE
       TIME-WAIT STATE
 */
-
 enum { 
     CSTATE_SEND_SYN,
     CSTATE_WAIT_FOR_SYN,
@@ -95,9 +96,45 @@ void transport_init(mysocket_t sd, bool_t is_active)
      * ECONNREFUSED, etc.) before calling the function.
      */
 
-    while( ctx->connection_state != CSTATE_CLOSED )  
-    
-    
+    if( !is_active )
+    {
+        ctx->connection_state = CSTATE_WAIT_FOR_SYN;
+        count = 0;
+        
+        while( ctx->connection_state != CSTATE_ESTABLISHED )  // loop where we wait for events
+        {
+            switch( ctx->connection_state )
+            {
+                case CSTATE_WAIT_FOR_SYN:
+                    if( count == 0 )
+                    {
+                        printf( "\nSYN?" );
+                        wait_flags = 0 | NETWORK_DATA;
+                        event = stcp_wait_for_event( sd, wait_flags, NULL ); // blocks; waits for network data
+                    } 
+                    else if( count == TCPHEADER_OFFSET )
+                    {
+                        errno = ECONNREFUSED; // we're receiving anything coherent.... 0.0
+                        return;
+                    } 
+                    else
+                        event = 0 | NETWORK_DATA;
+                        
+                    if( event & NETWORK_DATA )
+                    {
+                        
+                        
+                    }
+                    break;
+                
+            }
+        }
+    }
+    else // Active Connection
+    {
+        
+        
+    }
     
     // after loop
     ctx->connection_state = CSTATE_ESTABLISHED;

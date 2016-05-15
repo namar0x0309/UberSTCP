@@ -21,7 +21,9 @@
 #include "transport.h"
 
 
-enum { CSTATE_ESTABLISHED };    /* you should have more states */
+enum { 
+    CSTATE_ESTABLISHED,
+    CSTATE_CLOSED };    /* you should have more states */
 
 
 /* this structure is global to a mysocket descriptor */
@@ -65,6 +67,8 @@ void transport_init(mysocket_t sd, bool_t is_active)
     generate_initial_seq_num(ctx);
     ctx->sd = sd;
     
+    app_data = sgt = NULL;
+    recv_h = syn_h = syn_ack_h = ack_h = NULL;
     
 
     /* XXX: you should send a SYN packet here if is_active, or wait for one
@@ -74,9 +78,14 @@ void transport_init(mysocket_t sd, bool_t is_active)
      * if connection fails; to do so, just set errno appropriately (e.g. to
      * ECONNREFUSED, etc.) before calling the function.
      */
+
+    while( ctx->connection_state != CSTATE_CLOSED )  
+    
+    
+    
+    // after loop
     ctx->connection_state = CSTATE_ESTABLISHED;
     stcp_unblock_application(sd);
-
     control_loop(sd, ctx);
 
     /* do any cleanup here */

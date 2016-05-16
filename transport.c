@@ -130,7 +130,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         printf( "\nSending syn-ack" );
                     
                         // header allocation
-                        sgt_len = HEADER_LEN * OPTIONS_LEN;
+                        sgt_len = HEADER_LEN + OPTIONS_LEN;
                         sgt    = (char*)malloc( sgt_len * sizeof( char ) );      
                         assert( sgt );
                         
@@ -187,9 +187,36 @@ void transport_init(mysocket_t sd, bool_t is_active)
                     
                     if( event & NETWORK_DATA )
                     {
+                        printf( "\nUnlocking the network data stream" );
                         
+                        //allocation
+                        sgt_len = HEADER_LEN + OPTIONS_LEN + STCP_MSS;
+                        sgt    = (char*)malloc( sgt_len * sizeof( char ) );    // TODO: Circular Buffer  
+                        assert( sgt );
                         
+                        sgt_len = stcp_network_recv( sd, sgt, sgt_len );
+                        
+                        rcv_h = (STCPHeader*)sgt;
+                        
+                        app_data_len = get_size_of_app_data( sgt, sgt_len );
+                        if( app_data_len >  0 )
+                        {
+                            printf( "\nReceived the ACK" );
+                            handle_app_data( sgt, sgt_len, rcv_h , app_data_len );
+                        }
+                        
+                        // update context
+                        ctx->connection_state = CSTATE_ESTABLISHED;
+                        rcv_h = NULL;
+                        if( sgt )
+                        {
+                            free( sgt );
+                            sgt =   NULL;
+                        }
+                        attempts = 0;
                     }
+                    else
+                        ctx->connection_state = CSTATE_WAIT_FOR_SYN;
                     break;
             }
         }

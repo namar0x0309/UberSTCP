@@ -24,6 +24,7 @@
 #define HEADER_LEN          sizeof( STCPHeader)
 #define OPTIONS_LEN         40
 #define CONGESTION_WIN_SIZE 3072
+#define RECEIVER_WIN_SIZE 3072
 #define SYN_REC_DATA        10
 #define TIME_WAIT           4       // seconds
 /*
@@ -223,8 +224,49 @@ void transport_init(mysocket_t sd, bool_t is_active)
     }
     else // Active Connection
     {
+        ctx->connection_state = CSTATE_SEND_SYN;
+        attempts              = 0;
         
-        
+        while( ctx->connection_state != CSTATE_ESTABLISHED )
+        {
+            switch( ctx->connection_state )
+            {
+                case CSTATE_SEND_SYN:
+                    if(  attempts == SYN_REC_DATA  )
+                    {
+                        errno = ECONNREFUSED;
+                        return;
+                    }
+                    
+                    printf( "\nSending" );
+                    syn_h = (STCPHeader*) calloc( 1, HEADER_LEN );
+                    assert( syn_h );
+                    
+                    // syn header
+                    syn_h->th_win   = RECEIVER_WIN_SIZE;
+                    syn_h->th_flags = 0 | TH_SYN;
+                    syn_h->th_seq   = ctx->initial_sequence_num;
+                    syn_h->th_off   = TCPHEADER_OFFSET - 1;
+                    
+                    // send it
+                    if( stcp_network_send( sd, syn_h, HEADER_LEN, NULL ) == -1  )
+                        errno = ECONNREFUSED;
+                    else
+                        ctx->connection_state = CSTATE_WAIT_FOR_SYN_ACK;
+                    
+                    // deallocate variables
+                    if( syn_h )
+                    {
+                        free( syn_h );
+                        syn_h = NULL;
+                    }
+                    
+                    printf( "\nSyn has been sent" );
+                    ++attempts;
+                break;
+            }
+            
+        }
     }
     
     // after loop

@@ -24,7 +24,7 @@
 #define HEADER_LEN          sizeof( STCPHeader)
 #define OPTIONS_LEN         40
 #define CONGESTION_WIN_SIZE 3072
-#define RECEIVER_WIN_SIZE 3072
+#define RECEIVER_WIN_SIZE   3072
 #define SYN_REC_DATA        10
 #define TIME_WAIT           4       // seconds
 /*
@@ -58,6 +58,7 @@ typedef struct
 
     /* any other connection-wide global variables go here */
     mysocket_t sd;
+    unsigned int sender_win;
     
 } context_t;
 
@@ -232,7 +233,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
             switch( ctx->connection_state )
             {
                 case CSTATE_SEND_SYN:
-                    if(  attempts == SYN_REC_DATA  )
+                    if( attempts == SYN_REC_DATA  )
                     {
                         errno = ECONNREFUSED;
                         return;
@@ -264,10 +265,80 @@ void transport_init(mysocket_t sd, bool_t is_active)
                     printf( "\nSyn has been sent" );
                     ++attempts;
                 break;
-            }
-            
-        }
-    }
+                
+                case CSTATE_WAIT_FOR_SYN_ACK:
+                    printf( "\nBlock until SYN-ACK received" );
+                    
+                    gettimeofday( &cur_time, NULL );
+                    abs_time = (struct timespec* ) (&cur_time );
+                    abs_time->tv_sec += TIME_WAIT; // wait for next packet
+                    wait_flags = 0 | NETWORK_DATA;
+                    
+                    event = stcp_wait_for_event( ctx->sd, wait_flags, abs_time );
+                    
+                    if( event & NETWORK_DATA )
+                    {
+                        printf( "\nCooking the ACK" );
+                        sgt_len = HEADER_LEN + OPTIONS_LEN;
+                        sgt     = (char*)malloc( sgt_len * sizeof( char ) );
+                        assert( sgt );
+                        
+                        sgt_len = stcp_network_recv( sd, sgt, sgt_len );
+                       
+                        // build ack header
+                        ack_h = (STCPHeader*)calloc( 1, HEADER_LEN );
+                        assert( ack_h );
+                    
+                        rcv_h = (STCPHeader*)sgt;
+                            
+                        if( (rcv_h->th_flags & TH_SYN) && !( rcv_h->th_flags & TH_ACK ) ) // for SYN
+                        {
+                            // WAIT FOR own ack
+                            
+                        }
+                        else // for SYN-ACK
+                        {
+                            // filling ack header
+                            ack_h->th_off   = TCPHEADER_OFFSET - 1;
+                            ack_h->th_ack   = rcv_h->th_seq + 1;
+                            ack_h->th_seq   = ctx->initial_sequence_num;
+                            ack_h->th_flags = 0 | TH_ACK; 
+                            ack_h->th_win   = RECEIVER_WIN_SIZE;
+                            
+                            ctx->receiver_initial_seq_num = rcv_h->th_seq;
+                            ctx->sender_win               = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE );
+                            
+                            if( stcp_network_send( sd, ack_h, HEADER_LEN, NULL ) == -1 )
+                                errno = ECONNREFUSED;
+                            else 
+                                ctx->connection_state = CSTATE_ESTABLISHED;
+                        }
+                        // free up allocations
+                        rcv_h = NULL;
+                        if( ack_h )
+                        {
+                            free( ack_h );
+                            ack_h = NULL;
+                        }
+                        
+                        if( sgt )
+                        {
+                            free( sgt );
+                            sgt = NULL;
+                        }
+                        attempts = 0;
+                        printf( "\nWe have sent the ACK" );
+                    } 
+                    else
+                        ctx->connection_state = CSTATE_SEND_SYN;
+                break;
+                
+                default: 
+                    printf("\nDefault case" ); 
+                    break;
+            } // Switch
+        }// While loop
+    } // else - (Active Connection)
     
     // after loop
     ctx->connection_state = CSTATE_ESTABLISHED;
@@ -320,6 +391,8 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         // (4) is there any event to handle?
         event = stcp_wait_for_event(sd, 0, NULL);
 
+        if( event & TIMEOUT )
+            continue;
 
         /* check whether it was the network, app, or a close request */
         if (event & APP_DATA)
@@ -327,8 +400,21 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             /* the application has requested that data be sent */
             /* see stcp_app_recv() */
         }
+        
+         if (event & NETWORK_DATA)
+        {
+            if( header->th_flags * TH_FIN )
+            {
+                transport_close();
+            }
+        }
 
-        /* etc. */
+         if (event & APP_CLOSE_REQUESTED )
+        {
+            transport_close();
+        }
+
+        // FREE UP MEMORY
     }
 }
 

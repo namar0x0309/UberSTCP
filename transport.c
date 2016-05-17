@@ -379,32 +379,27 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         /* see stcp_api.h or stcp_api.c for details of this function */
         /* XXX: you will need to change some of these arguments! */
 
-        // We either ask the api,
-        // (1) is there a read to handle?,
-        // (2) is there a write to handle?,
-        // (3) is there a connection shutdown to handle? or
-        // (4) is there any event to handle?
         event = stcp_wait_for_event(sd, 0, NULL);
 
         if( event & TIMEOUT )
             continue;
 
         /* check whether it was the network, app, or a close request */
-        if (event & APP_DATA)
+        if (event & APP_DATA) // Eliza
         {
             /* the application has requested that data be sent */
             /* see stcp_app_recv() */
         }
         
-         if (event & NETWORK_DATA)
+         if (event & NETWORK_DATA) // Kelly
         {
             if( header->th_flags * TH_FIN )
             {
-                transport_close();
+                transport_close(); 
             }
         }
 
-         if (event & APP_CLOSE_REQUESTED )
+         if (event & APP_CLOSE_REQUESTED ) // Nassim
         {
             transport_close();
         }
@@ -442,3 +437,230 @@ void our_dprintf(const char *format,...)
 
 
 
+/************* TIMER ******************/
+void timerOn() // TODO: refactor
+{
+    struct sigaction sa;
+
+    /* set the signal handler */
+    memset(&sa, 0, sizeof(sa));
+    //sa.sa_handler = resend;  // Implement if needed (NASSIM)
+    sigaction(SIGALRM, &sa, NULL);
+
+    /* set the alarm */
+    ctx->timer_running = TRUE;
+    alarm(TIMEOUT_INTERVAL);
+    printf("\nTimer started");
+}
+
+void timerOff() // TODO: refactor
+{
+    /* switch off the alarm */
+    ctx->timer_running        = FALSE;
+    ctx->retransmission_count = 0;
+    alarm(0);
+    printf("\nTimer stopped");
+}
+
+size_t appDataSize(char *segment, ssize_t segment_len) // TODO: refactor
+{
+    size_t app_data_len;
+
+    assert(segment);
+
+    if(TCP_OPTIONS_LEN(segment) == 0)
+        app_data_len = segment_len - HEADER_SIZE;
+    else
+        app_data_len = segment_len - (HEADER_SIZE + TCP_OPTIONS_LEN(segment));
+
+    return app_data_len;
+}
+
+void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size_t app_data_len) // TODO: refactor
+{
+    size_t data_offset;
+    char *app_data;
+
+    /* if the sequence number of the arrived segment is the expected sequence number */
+    /* then extract the data within the receive window and deliver it to the application */
+    /* update the window according to the value of the ACK field */
+    if(header->th_seq == ctx->expected_sequence_num)
+    {
+        printf("\nIf sequence number received is the expected sequence number");
+
+        /* extract app_data */
+        data_offset = 0;
+        app_data = dataGetFromSegment(segment, data_offset, app_data_len);
+        printf("\nApplication data extracted from the segment");
+
+        /* buffer whatever has been received */
+        app_data_len = bufferReceiveData(ctx->expected_sequence_num_ptr, app_data, app_data_len);
+        printf("\nReceived data buffered");
+
+        /* deliver max possible data to the application */
+        app_data_len = dataDeliverToApplication();
+        printf("\nReceived data delivered to application");
+
+        /* update the STCP state variables */
+        ctx->expected_sequence_num_ptr = (ctx->expected_sequence_num_ptr + app_data_len) % WINDOW_SIZE;
+        ctx->expected_sequence_num    += app_data_len;
+        ctx->recv_window_size         += app_data_len;
+        if(ctx->recv_window_size > WINDOW_SIZE)
+            ctx->recv_window_size = WINDOW_SIZE;
+        printf("\nSTCP state variables updated");
+
+        /* send the ACK */
+        headerSend(ctx->next_sequence_num);
+        printf("\nACK sent");
+    }
+}
+
+void transport_close() // Nassim
+
+{
+	
+	
+}
+
+void bufferSendData(char *app_data, size_t app_data_len) // TODO: refactor
+{
+    size_t next_seq_num_ptr, i, j;
+
+    next_seq_num_ptr = (ctx->send_base_ptr + (ctx->next_sequence_num - ctx->send_base)) % WINDOW_SIZE;
+
+    for(i = next_seq_num_ptr, j = 0; j < app_data_len; i = (i + 1) % WINDOW_SIZE, j++)
+        ctx->send_window[i] = app_data[j];
+}
+
+size_t bufferReceiveData(size_t start, char *app_data, size_t app_data_len) // TODO: refactor
+{
+    size_t i, j, bytes_delivered;
+
+    start           = start % WINDOW_SIZE;
+    bytes_delivered = 0;
+    assert(app_data);
+
+    printf("\n%u bytes to be buffered", app_data_len);
+    for(i = start, j = 0; j < app_data_len; i = (i + 1) % WINDOW_SIZE, j++)
+    {
+        if(ctx->recv_window_lookup[i] == 0)
+        {
+            //printf("\nByte with window seq number %u has been buffered", i);
+            ctx->recv_window[i]        = app_data[j];
+            ctx->recv_window_lookup[i] = 1;
+            bytes_delivered++;
+        }
+    }
+    printf("\n%u bytes have been buffered", bytes_delivered);
+    return bytes_delivered;
+}
+
+
+size_t windowSize() // TODO: refactor
+{
+    size_t curr_send_window_left;
+
+    /* if the sequence number space has wrapped around */
+    if(MAX_SEQUENCE_NUMBER - ctx->send_base < WINDOW_SIZE)
+    {
+        printf("\nWrap around!");
+        /* if the send_base and next_sequence_number have not wrapped around */
+        if(ctx->next_sequence_num > ctx->send_base)
+            curr_send_window_left = (MAX_SEQUENCE_NUMBER - ctx->next_sequence_num) + (WINDOW_SIZE - (MAX_SEQUENCE_NUMBER - ctx->send_base));
+        /* if the next_sequence_number has wrapped around */
+        else
+            curr_send_window_left = MAX_SEQUENCE_NUMBER - ctx->send_base + (ctx->next_sequence_num + 1);
+    }
+    /* no wrap around */
+    else
+    {
+        printf("\nNo wrap around");
+        curr_send_window_left = ctx->send_base + WINDOW_SIZE - ctx->next_sequence_num;
+    }
+
+    return curr_send_window_left;
+}
+
+void headerSend(tcp_seq seq_num) // TODO: refactor
+{
+    /* construct the header */
+    STCPHeader *new_header = NULL;
+    ssize_t bytes_sent;
+
+    new_header = construct_header(seq_num);
+
+    /* send ACK */
+    do
+    {
+        bytes_sent = stcp_network_send(ctx->sd, new_header, HEADER_SIZE, NULL);
+    }while(bytes_sent == -1);
+    printf("\nACK %d sent to network layer", new_header->th_ack);
+
+    /* free up memory */
+    if(new_header)
+    {
+        free(new_header);
+        new_header = NULL;
+    }
+}
+
+size_t dataDeliverToApplication() // TODO: refactor
+{
+    size_t i, j, app_data_len;
+    char *app_data;
+
+    /* calculate the number of bytes that can be delivered */
+    app_data_len = 0;
+    i            = ctx->expected_sequence_num_ptr;
+    while(ctx->recv_window_lookup[i] == 1 && app_data_len < WINDOW_SIZE)
+    {
+        i = (i + 1) % WINDOW_SIZE;
+        app_data_len++;
+    }
+
+    /* create a buffer that can be used to deliver the data to application */
+    app_data = (char *) malloc(app_data_len * sizeof(char));
+    assert(app_data);
+
+    /* store the data to be delivered in app_data */
+    /* update the recv_buffer_lookup table */
+    for(i = ctx->expected_sequence_num_ptr, j = 0; j < app_data_len; i = (i + 1) % WINDOW_SIZE, j++)
+    {
+        app_data[j]                = ctx->recv_window[i];
+        ctx->recv_window_lookup[i] = 0;
+    }
+
+    /* deliver data to the application */
+    stcp_app_send(ctx->sd, app_data, app_data_len);
+
+    /* free up memory */
+    if(app_data)
+    {
+        free(app_data);
+        app_data = NULL;
+    }
+    printf("\n%u bytes delivered to application", app_data_len);
+    return app_data_len;
+}
+
+char *dataGetFromSegment(char *segment, size_t data_offset, size_t app_data_len) // TODO: refactor
+{
+    size_t data_start_point;
+    char *app_data;
+
+    assert(segment);
+
+    /* allocate memory to store the extracted application data */
+    app_data = (char *) malloc(app_data_len * sizeof(char));
+    assert(app_data);
+
+    /* calculate the point in segment where to start the extraction from */
+    data_start_point = TCP_DATA_START(segment) + data_offset;
+
+    /* copy the application data from segment to app_data */
+    memcpy(app_data, segment + data_start_point, app_data_len);
+
+    printf("\nData extracted from byte number: %u", data_start_point);
+
+    return app_data;
+}

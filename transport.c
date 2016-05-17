@@ -291,28 +291,23 @@ void transport_init(mysocket_t sd, bool_t is_active)
                     
                         rcv_h = (STCPHeader*)sgt;
                             
-                        if( (rcv_h->th_flags & TH_SYN) && !( rcv_h->th_flags & TH_ACK ) ) // for SYN
-                        {
-                            // WAIT FOR own ack
+                        // filling ack header
+                        ack_h->th_off   = TCPHEADER_OFFSET - 1;
+                        ack_h->th_ack   = rcv_h->th_seq + 1;
+                        ack_h->th_seq   = ctx->initial_sequence_num;
+                        ack_h->th_flags = 0 | TH_ACK; 
+                        ack_h->th_win   = RECEIVER_WIN_SIZE;
                             
-                        }
-                        else // for SYN-ACK
-                        {
-                            // filling ack header
-                            ack_h->th_off   = TCPHEADER_OFFSET - 1;
-                            ack_h->th_ack   = rcv_h->th_seq + 1;
-                            ack_h->th_seq   = ctx->initial_sequence_num;
-                            ack_h->th_flags = 0 | TH_ACK; 
-                            ack_h->th_win   = RECEIVER_WIN_SIZE;
+                        ctx->receiver_initial_seq_num = rcv_h->th_seq; // TODO: Update from received header
+                        ctx->sender_win               = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE );
+                        
+                        
+                        if( stcp_network_send( sd, ack_h, HEADER_LEN, NULL ) == -1 )
+                            errno = ECONNREFUSED;
+                    
+                        if( rcv_h->th_flags & TH_ACK )
+                            ctx->connection_state = CSTATE_ESTABLISHED;
                             
-                            ctx->receiver_initial_seq_num = rcv_h->th_seq;
-                            ctx->sender_win               = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE );
-                            
-                            if( stcp_network_send( sd, ack_h, HEADER_LEN, NULL ) == -1 )
-                                errno = ECONNREFUSED;
-                            else 
-                                ctx->connection_state = CSTATE_ESTABLISHED;
-                        }
                         // free up allocations
                         rcv_h = NULL;
                         if( ack_h )

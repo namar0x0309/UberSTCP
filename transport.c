@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
 #include "mysock.h"
 #include "stcp_api.h"
 #include "transport.h"
@@ -55,6 +56,7 @@ typedef struct
 
     int connection_state;   /* state of the connection (established, etc.) */
     tcp_seq initial_sequence_num;
+    tcp_seq receiver_initial_seq_num;
 
     /* any other connection-wide global variables go here */
     mysocket_t sd;
@@ -74,11 +76,11 @@ static void control_loop(mysocket_t sd, context_t *ctx);
 void transport_init(mysocket_t sd, bool_t is_active)
 {
     unsigned int event, wait_flags;
-    STCPHeader *recv_h, *syn_h, *syn_ack_h, *ack_h;
-    char *segt, *app_data;
+    STCPHeader *rcv_h, *syn_h, *syn_ack_h, *ack_h;
+    char *sgt, *app_data;
     ssize_t sgt_len; 
     size_t app_data_len;
-    struct timespec *abs_time
+    struct timespec *abs_time;
     struct timeval  cur_time;
     int attempts;
     
@@ -91,7 +93,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
     ctx->sd = sd;
     
     app_data = sgt = NULL;
-    recv_h = syn_h = syn_ack_h = ack_h = NULL;
+    rcv_h = syn_h = syn_ack_h = ack_h = NULL;
     
 
     /* XXX: you should send a SYN packet here if is_active, or wait for one
@@ -148,8 +150,8 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         syn_ack_h->th_ack       = rcv_h->th_seq + 1;
                         syn_ack_h->th_seq       = ctx->initial_sequence_num;
                         syn_ack_h->th_flags     = 0 | TH_ACK | TH_SYN;
-                        syn_ack_header->th_win  = CONGESTION_WIN_SIZE; 
-                        syn_ack_header->th_off  = TCPHEADER_OFFSET - 1;
+                        syn_ack_h->th_win  = CONGESTION_WIN_SIZE;
+                        syn_ack_h->th_off  = TCPHEADER_OFFSET - 1;
                         
                         // get initial sequence number
                         ctx->receiver_initial_seq_num = rcv_h->th_seq;

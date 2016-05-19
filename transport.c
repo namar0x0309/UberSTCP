@@ -231,7 +231,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         if( app_data_len >  0 )
                         {
                             printf( "\npassive: Received the ACK" );
-                            handle_app_data( sgt, sgt_len, rcv_h , app_data_len );
+                            appDataProcess( sgt, sgt_len, rcv_h , app_data_len );
                         }
                         
                         // update context
@@ -505,44 +505,44 @@ size_t appDataSize(char *segment, ssize_t segment_len) // TODO: refactor
     return app_data_len;
 }
 
-// void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size_t app_data_len) // TODO: refactor
-// {
-    // size_t data_offset;
-    // char *app_data;
+void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size_t app_data_len) // TODO: refactor
+{
+    size_t data_offset;
+    char *app_data;
 
-    // /* if the sequence number of the arrived segment is the expected sequence number */
-    // /* then extract the data within the receive window and deliver it to the application */
-    // /* update the window according to the value of the ACK field */
-    // if(header->th_seq == ctx->expected_sequence_num)
-    // {
-        // printf("\nIf sequence number received is the expected sequence number");
+    /* if the sequence number of the arrived segment is the expected sequence number */
+    /* then extract the data within the receive window and deliver it to the application */
+    /* update the window according to the value of the ACK field */
+    if(header->th_seq == ctx->expected_sequence_num)
+    {
+        printf("\nIf sequence number received is the expected sequence number");
 
-        // /* extract app_data */
-        // data_offset = 0;
-        // app_data = dataGetFromSegment(segment, data_offset, app_data_len);
-        // printf("\nApplication data extracted from the segment");
+        /* extract app_data */
+        data_offset = 0;
+        app_data = dataGetFromSegment(segment, data_offset, app_data_len);
+        printf("\nApplication data extracted from the segment");
 
-        // /* buffer whatever has been received */
-        // app_data_len = bufferReceiveData(ctx->expected_sequence_num_ptr, app_data, app_data_len);
-        // printf("\nReceived data buffered");
+        /* buffer whatever has been received */
+        app_data_len = bufferReceiveData(ctx->expected_sequence_num_ptr, app_data, app_data_len);
+        printf("\nReceived data buffered");
 
-        // /* deliver max possible data to the application */
-        // app_data_len = dataDeliverToApplication();
-        // printf("\nReceived data delivered to application");
+        /* deliver max possible data to the application */
+        app_data_len = dataDeliverToApplication();
+        printf("\nReceived data delivered to application");
 
-        // /* update the STCP state variables */
-        // ctx->expected_sequence_num_ptr = (ctx->expected_sequence_num_ptr + app_data_len) % WINDOW_SIZE;
-        // ctx->expected_sequence_num    += app_data_len;
-        // ctx->recv_window_size         += app_data_len;
-        // if(ctx->recv_window_size > WINDOW_SIZE)
-            // ctx->recv_window_size = WINDOW_SIZE;
-        // printf("\nSTCP state variables updated");
+        /* update the STCP state variables */
+        ctx->expected_sequence_num_ptr = (ctx->expected_sequence_num_ptr + app_data_len) % WINDOW_SIZE;
+        ctx->expected_sequence_num    += app_data_len;
+        ctx->recv_window_size         += app_data_len;
+        if(ctx->recv_window_size > WINDOW_SIZE)
+            ctx->recv_window_size = WINDOW_SIZE;
+        printf("\nSTCP state variables updated");
 
-        // /* send the ACK */
-        // headerSend(ctx->next_sequence_num);
-        // printf("\nACK sent");
-    // }
-// }
+        /* send the ACK */
+        headerSend(ctx->next_sequence_num);
+        printf("\nACK sent");
+    }
+}
 
 // /**************************** Event Handlers *********************************************/
 

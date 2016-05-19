@@ -61,7 +61,7 @@ typedef struct
     /* any other connection-wide global variables go here */
     mysocket_t sd;
     unsigned int sender_win;
-    
+
 } context_t;
 
 
@@ -78,7 +78,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
     unsigned int event, wait_flags;
     STCPHeader *rcv_h, *syn_h, *syn_ack_h, *ack_h;
     char *sgt, *app_data;
-    ssize_t sgt_len; 
+    ssize_t sgt_len;
     size_t app_data_len;
     struct timespec *abs_time;
     struct timeval  cur_time;
@@ -137,11 +137,11 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         sgt_len = HEADER_LEN + OPTIONS_LEN;
                         sgt    = (char*)malloc( sgt_len * sizeof( char ) );      
                         assert( sgt );
-                        
+
                         sgt_len = stcp_network_recv( sd, sgt, sgt_len );            // network fill the buffer
-                        
+
                         rcv_h = (STCPHeader*)sgt;
-                        
+
                         // SYN_ACK header
                         syn_ack_h = (STCPHeader*)calloc( 1, HEADER_LEN );
                         assert( syn_ack_h );
@@ -152,10 +152,10 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         syn_ack_h->th_flags     = 0 | TH_ACK | TH_SYN;
                         syn_ack_h->th_win  = CONGESTION_WIN_SIZE;
                         syn_ack_h->th_off  = TCPHEADER_OFFSET - 1;
-                        
+
                         // get initial sequence number
                         ctx->receiver_initial_seq_num = rcv_h->th_seq;
-                        
+
                         printf( "\nSend SYN ACK" );
                         stcp_network_send( sd, syn_ack_h, HEADER_LEN, NULL );
                         ctx->connection_state = CSTATE_WAIT_FOR_ACK;
@@ -290,19 +290,19 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         // build ack header
                         ack_h = (STCPHeader*)calloc( 1, HEADER_LEN );
                         assert( ack_h );
-                    
+
                         rcv_h = (STCPHeader*)sgt;
-                            
+
                         // filling ack header
                         ack_h->th_off   = TCPHEADER_OFFSET - 1;
                         ack_h->th_ack   = rcv_h->th_seq + 1;
                         ack_h->th_seq   = ctx->initial_sequence_num;
                         ack_h->th_flags = 0 | TH_ACK; 
                         ack_h->th_win   = RECEIVER_WIN_SIZE;
-                            
+
                         ctx->receiver_initial_seq_num = rcv_h->th_seq; // TODO: Update from received header
                         ctx->sender_win               = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE );
-                        
+
                         
                         if( stcp_network_send( sd, ack_h, HEADER_LEN, NULL ) == -1 )
                             errno = ECONNREFUSED;
@@ -392,12 +392,12 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             /* the application has requested that data be sent */
             /* see stcp_app_recv() */
         }
-        
+
          if (event & NETWORK_DATA) // Kelly
         {
             if( header->th_flags * TH_FIN )
             {
-                transport_close(); 
+                transport_close();
             }
         }
 

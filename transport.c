@@ -586,6 +586,9 @@ void send_app_data(mysocket_t sd, context_t *ctx)
 		}
 		/*update next sequence number */
 		ctx->snd_nxt += grabbed_bytes;
+		
+		/*free memory*/
+		free(sgt);
 	}
 }
 

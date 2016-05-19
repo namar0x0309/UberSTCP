@@ -205,14 +205,14 @@ void transport_init(mysocket_t sd, bool_t is_active)
                 
                 // after getting ack, continue in receiving data.
                 case CSTATE_WAIT_FOR_ACK:
-                    printf( "\npassive: Where's the ACK" );
-                    
+                    printf( "\npassive: Where's the ACK?" );
+                    /*
                     gettimeofday( &cur_time, NULL );
                     abs_time = (struct timespec* ) (&cur_time );
-                    abs_time->tv_sec += TIME_WAIT; // wait for next packet
+                    abs_time->tv_sec += TIME_WAIT; // wait for next packet*/
                     wait_flags = 0 | NETWORK_DATA;
                     
-                    event = stcp_wait_for_event( ctx->sd, wait_flags, abs_time );
+                    event = stcp_wait_for_event( ctx->sd, wait_flags, NULL); //abs_time );
                     
                     if( event & NETWORK_DATA )
                     {
@@ -227,7 +227,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         
                         rcv_h = (STCPHeader*)sgt;
                         
-                        app_data_len = get_size_of_app_data( sgt, sgt_len );    // TODO: Don't we have to make sure this is an ACK?
+                        app_data_len = appDataSize( sgt, sgt_len );    // TODO: Don't we have to make sure this is an ACK?
                         if( app_data_len >  0 )
                         {
                             printf( "\npassive: Received the ACK" );
@@ -296,12 +296,12 @@ void transport_init(mysocket_t sd, bool_t is_active)
                 case CSTATE_WAIT_FOR_SYN_ACK:
                     printf( "\nactive: Block until SYN-ACK received" );
                     
-                    gettimeofday( &cur_time, NULL );
+                    /*gettimeofday( &cur_time, NULL );
                     abs_time = (struct timespec* ) (&cur_time );
-                    abs_time->tv_sec += TIME_WAIT; // wait for next packet
+                    abs_time->tv_sec += TIME_WAIT; // wait for next packet*/
                     wait_flags = 0 | NETWORK_DATA;
                     
-                    event = stcp_wait_for_event( ctx->sd, wait_flags, abs_time );
+                    event = stcp_wait_for_event( ctx->sd, wait_flags, NULL);//abs_time );
                     
                     if( event & NETWORK_DATA )
                     {
@@ -491,19 +491,19 @@ static void generate_initial_seq_num(context_t *ctx)
     // printf("\nTimer stopped");
 // }
 
-// size_t appDataSize(char *segment, ssize_t segment_len) // TODO: refactor
-// {
-    // size_t app_data_len;
+size_t appDataSize(char *segment, ssize_t segment_len) // TODO: refactor
+{
+    size_t app_data_len;
 
-    // assert(segment);
+    assert(segment);
 
-    // if(TCP_OPTIONS_LEN(segment) == 0)
-        // app_data_len = segment_len - HEADER_SIZE;
-    // else
-        // app_data_len = segment_len - (HEADER_SIZE + TCP_OPTIONS_LEN(segment));
+    if(TCP_OPTIONS_LEN(segment) == 0)
+        app_data_len = segment_len - HEADER_LEN;
+    else
+        app_data_len = segment_len - (HEADER_LEN + TCP_OPTIONS_LEN(segment));
 
-    // return app_data_len;
-// }
+    return app_data_len;
+}
 
 // void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size_t app_data_len) // TODO: refactor
 // {

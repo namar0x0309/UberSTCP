@@ -29,12 +29,22 @@
 #define SYN_REC_DATA        10
 #define TIME_WAIT           4       // seconds
 /*
-SYN-RECEIVED STATE
-      FIN-WAIT-1 STATE
-      FIN-WAIT-2 STATE
-      CLOSE-WAIT STATE
-      LAST-ACK STATE
-      TIME-WAIT STATE
+      FIN-WAIT-1 STATE - waiting for a connection termination request from the
+                            remote TCP, or an acknowledgment of the connection
+                            termination request previously sent
+      FIN-WAIT-2 STATE - waiting for a connection termination request from the
+                            remote TCP
+      CLOSE-WAIT STATE - waiting for a connection termination request from the
+                            local user
+      CLOSING STATE    - waiting for a connection termination request
+                            acknowledgment from the remote tcp
+      LAST-ACK STATE   - waiting for an acknowledgment of the connection
+                            termination request previously sent to the remote
+                            TCP (which includes an acknowledgment of its
+                            connection termination request).
+      TIME-WAIT STATE  - waiting for enough time to pass to be sure the remote
+                            TCP received the acknowledgment of its connection
+                            termination request
 */
 enum { 
     CSTATE_SEND_SYN,
@@ -42,9 +52,9 @@ enum {
     CSTATE_WAIT_FOR_SYN_ACK,
     CSTATE_WAIT_FOR_ACK,
     CSTATE_ESTABLISHED,
-    CSTATE_SEND_FIN,
-    CSTATE_FIN_RECVD,
-    CSTATE_WAIT_FOR_FIN,
+    CSTATE_SEND_FIN,        /* same as FIN-WAIT-1? */
+    CSTATE_FIN_RECVD,       /* same as CLOSING? */
+    CSTATE_WAIT_FOR_FIN,    /* same as FIN-WAIT-2? */
     CSTATE_CLOSED 
 };    /* you should have more states */
 
@@ -60,13 +70,24 @@ typedef struct
 
     /* any other connection-wide global variables go here */
     mysocket_t sd;
-    unsigned int sender_win;
-    
+
+    /* Send Sequence Variables (RFC 793 Section 3.2 & 3.3) */
+    tcp_seq snd_una;    /* oldest unacknowledged sequence number */
+    tcp_seq snd_nxt;    /* next sequence number to be sent */
+    unsigned int sender_win; // called SND.WND in the RFC
+    // ISS in the RFC is called initial_sequence_num here
+
+    /* Receive Sequence Variables (RFC 793 Section 3.2  & 3.3) */
+    tcp_seq rcv_nxt;    /* next sequence number expected on an incoming segment,
+                           and is the left or lower edge of the receive window */
+    // RCV.WND in the RFC is called RECEIVER_WIN_SIZE here
+    // IRS in the RFC is called receiver_initial_seq_num here
 } context_t;
 
 
 static void generate_initial_seq_num(context_t *ctx);
 static void control_loop(mysocket_t sd, context_t *ctx);
+static void receive_network_segment(mysocket_t sd, context_t *ctx);
 
 
 /* initialise the transport layer, and start the main loop, handling
@@ -78,7 +99,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
     unsigned int event, wait_flags;
     STCPHeader *rcv_h, *syn_h, *syn_ack_h, *ack_h;
     char *sgt, *app_data;
-    ssize_t sgt_len; 
+    ssize_t sgt_len;
     size_t app_data_len;
     struct timespec *abs_time;
     struct timeval  cur_time;
@@ -137,11 +158,11 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         sgt_len = HEADER_LEN + OPTIONS_LEN;
                         sgt    = (char*)malloc( sgt_len * sizeof( char ) );      
                         assert( sgt );
-                        
+
                         sgt_len = stcp_network_recv( sd, sgt, sgt_len );            // network fill the buffer
-                        
-                        rcv_h = (STCPHeader*)sgt;
-                        
+
+                        rcv_h = (STCPHeader*)sgt; // TODO: Don't we have to make sure this is a SYN?
+
                         // SYN_ACK header
                         syn_ack_h = (STCPHeader*)calloc( 1, HEADER_LEN );
                         assert( syn_ack_h );
@@ -152,10 +173,13 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         syn_ack_h->th_flags     = 0 | TH_ACK | TH_SYN;
                         syn_ack_h->th_win  = CONGESTION_WIN_SIZE;
                         syn_ack_h->th_off  = TCPHEADER_OFFSET - 1;
-                        
-                        // get initial sequence number
+
+                        // extract info from received header
+                        ctx->rcv_nxt                  = rcv_h->th_seq + 1;
                         ctx->receiver_initial_seq_num = rcv_h->th_seq;
-                        
+                        ctx->sender_win               = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE );
+                        ctx->snd_una                  = rcv_h->th_ack;
+
                         printf( "\nSend SYN ACK" );
                         stcp_network_send( sd, syn_ack_h, HEADER_LEN, NULL );
                         ctx->connection_state = CSTATE_WAIT_FOR_ACK;
@@ -202,7 +226,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         
                         rcv_h = (STCPHeader*)sgt;
                         
-                        app_data_len = get_size_of_app_data( sgt, sgt_len );
+                        app_data_len = get_size_of_app_data( sgt, sgt_len );    // TODO: Don't we have to make sure this is an ACK?
                         if( app_data_len >  0 )
                         {
                             printf( "\nReceived the ACK" );
@@ -290,19 +314,21 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         // build ack header
                         ack_h = (STCPHeader*)calloc( 1, HEADER_LEN );
                         assert( ack_h );
-                    
-                        rcv_h = (STCPHeader*)sgt;
-                            
+
+                        rcv_h = (STCPHeader*)sgt; // TODO: Don't we have to make sure this is a SYNACK?
+
                         // filling ack header
                         ack_h->th_off   = TCPHEADER_OFFSET - 1;
                         ack_h->th_ack   = rcv_h->th_seq + 1;
                         ack_h->th_seq   = ctx->initial_sequence_num;
                         ack_h->th_flags = 0 | TH_ACK; 
                         ack_h->th_win   = RECEIVER_WIN_SIZE;
-                            
+
+                        // extract info from received header
+                        ctx->rcv_nxt                  = rcv_h->th_seq + 1;
                         ctx->receiver_initial_seq_num = rcv_h->th_seq; // TODO: Update from received header
                         ctx->sender_win               = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE );
-                        
+                        ctx->snd_una                  = rcv_h->th_ack;
                         
                         if( stcp_network_send( sd, ack_h, HEADER_LEN, NULL ) == -1 )
                             errno = ECONNREFUSED;
@@ -392,13 +418,12 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             /* the application has requested that data be sent */
             /* see stcp_app_recv() */
         }
-        
+
          if (event & NETWORK_DATA) // Kelly
         {
-            if( header->th_flags * TH_FIN )
-            {
-                transport_close(); 
-            }
+            printf("\nNetwork data available to receive");
+            receive_network_segment(sd, ctx);
+
         }
 
          if (event & APP_CLOSE_REQUESTED ) // Nassim
@@ -514,6 +539,97 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
         /* send the ACK */
         headerSend(ctx->next_sequence_num);
         printf("\nACK sent");
+    }
+}
+
+/* Process a segment received from the network */
+void receive_network_segment(mysocket_t sd, context_t *ctx)
+{
+    STCPHeader *rcv_h;
+    char *sgt;
+    ssize_t seg_len_incl_hdr;
+
+    /* Current Segment Variables (RFC 793 Section 3.2 & 3.3) */
+    tcp_seq seg_seq;    /* first sequence number of a segment */
+    tcp_seq seg_ack;    /* acknowledgment from the receiving TCP (next sequence
+                            number expected by the receiving TCP) */
+    ssize_t seg_len;    /* the number of octets occupied by the data in the
+                            segment (counting SYN and FIN) */
+    ssize_t seg_wnd;    /* segment windows */
+
+    /* Allocation */
+    seg_len_incl_hdr = HEADER_LEN + OPTIONS_LEN + STCP_MSS;
+    sgt = (char*)malloc( seg_len_incl_hdr * sizeof( char ) );
+    assert( sgt );
+
+    /* Receive the segment and extract the header from it */
+    seg_len_incl_hdr = stcp_network_recv( sd, sgt, seg_len_incl_hdr );
+    rcv_h = (STCPHeader*)sgt;
+    printf("\nSegment received");
+
+    /* Extract info from received header */
+    seg_len = seg_len_incl_hdr - rcv_h->th_off;
+    seg_seq = rcv_h->th_seq;
+    ctx->sender_win = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE );
+
+    /* Check sequence number; RFC 793 [Page 69]
+     * If the segment contains data that comes after the next byte we're expecting,
+     * send an ACK for the next expected byte and drop the packet (by returning) */
+    if (seg_len > 0 && seg_seq > ctx->rcv_nxt)
+    {
+        headerSend(ctx->rcv_nxt);   // TODO: make sure headerSend() sends an ACK like the code implies
+        return;
+    }
+
+    /* Trim off any portion of the data that we've already received */
+    if (seg_seq < ctx->rcv_nxt)
+    {
+        rcv_h->th_off -= (ctx->rcv_nxt - seg_seq);
+        seg_len  -= (ctx->rcv_nxt - seg_seq);
+        seg_seq = ctx->rcv_nxt;
+    }
+
+    /* Check the ACK field; RFC 793 [Page 72] */
+    if (rcv_h->th_flags & TH_ACK)
+    {
+        seg_ack = rcv_h->th_ack;
+        printf("\nProcessing ACK %u", seg_ack);
+
+        /* If the ACK is within the send window, update the first unacked byte
+         * and the send window size */
+        if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt)
+        {
+            printf("\nThe ACK is within the send window");
+            ctx->snd_una = seg_ack;
+            ctx->sender_win = rcv_h->th_win;
+
+         /* If it's a duplicate of the most recent ACK, update the send window size */
+        } else if (ctx->snd_una = seg_ack)
+        {
+            ctx->sender_win = rcv_h->th_win;
+        }
+
+        // TODO: stop the timer if it is running and start it if there are unACKed segments (I'm hoping someone else has already gotten a timer set up, otherwise I'll take care of it)
+
+        printf("\nDone processing ACK");
+    }
+
+    /* Process the segment text; RFC 793 [Page 74] */
+    if (seg_len > 0)
+    {
+        printf("\nHandling received data beginning at sequence number %u,", seg_seq);
+        /* TODO: See if Nassim has the handle_app_data() code available; otherwise
+         * I'll write something to pass the data to the application */
+
+        /* We've now taken responsibility for delivering the data to the user, so
+         * we ACK receipt of the data and advance rcv_nxt over the data accepted */
+        ctx->rcv_nxt += seg_len;
+        headerSend(ctx->rcv_nxt);   // TODO: make sure headerSend() sends an ACK like the code implies
+    }
+
+    if( rcv_h->th_flags * TH_FIN )  // TODO: See if I need to handle any packets coming in during the FIN sequence
+    {
+        transport_close();
     }
 }
 

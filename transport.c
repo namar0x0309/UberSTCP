@@ -26,6 +26,7 @@
 #define OPTIONS_LEN         40
 #define CONGESTION_WIN_SIZE 3072
 #define RECEIVER_WIN_SIZE   3072
+#define MSS_LEN				536
 #define SYN_REC_DATA        10
 #define TIME_WAIT           4       // seconds
 /*
@@ -56,7 +57,7 @@ enum {
     CSTATE_FIN_RECVD,       /* same as CLOSING? */
     CSTATE_WAIT_FOR_FIN,    /* same as FIN-WAIT-2? */
     CSTATE_CLOSED 
-};    /* you should have more states */
+}; 
 
 
 /* this structure is global to a mysocket descriptor */
@@ -400,23 +401,24 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(ctx);
     assert(!ctx->done);
 
-    while (!ctx->done)
+    while (!ctx->done) /* while CSTATE_ESTABLISHED */
     {
         unsigned int event;
 
         /* see stcp_api.h or stcp_api.c for details of this function */
         /* XXX: you will need to change some of these arguments! */
 
-        event = stcp_wait_for_event(sd, 0, NULL);
+        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
-        if( event & TIMEOUT )
+        if( event & TIMEOUT ) /* should never get here */
             continue;
 
         /* check whether it was the network, app, or a close request */
         if (event & APP_DATA) // Eliza
         {
             /* the application has requested that data be sent */
-            /* see stcp_app_recv() */
+			printf("\nApp data available to send");
+            send_app_data(sd, ctx);
         }
 
          if (event & NETWORK_DATA) // Kelly
@@ -436,7 +438,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 }
 
 
-/**********************************************************************/
+/****************************** Helper Functions ****************************************/
 /* our_dprintf
  *
  * Send a formatted message to stdout.
@@ -542,6 +544,51 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
     }
 }
 
+/**************************** Event Handlers *********************************************/
+
+
+/* Process application data */
+/*todo: Sequence numbers need mod 2^32 arithmetic;  */
+void send_app_data(mysocket_t sd, context_t *ctx)
+{
+	size_t grabbed_bytes; /* how many bytes actually read from application */
+	ssize_t passed_bytes; /* how many bytes were able to send to network */
+	char *sgt, *data;
+	size_t data_len;
+	STCPHeader *snd_h;
+    
+	/* send data only if sender window is not full */
+	ssize_t send_capacity = ctx->snd_una + ctx->sender_win - 1 - ctx->snd_nxt;  /* rfc 793 [p. 83]*/
+	if( send_capacity > 0 ){
+		/* adjust max amount of data we can send*/
+		if (send_capacity > MSS_LEN) { send_capacity = MSS_LEN;}
+		
+		/* allocate space for header and data */
+		sgt = (char *) malloc(send_capacity * sizeof(char));  /* why not permaently allocate 1-MSS buffer globally and reuse it? */
+		data = sgt + HEADER_LEN;
+		data_len = send_capacity - HEADER_LEN;
+		
+        /* get data*/
+		grabbed_bytes = stcp_app_recv(sd, data, data_len);
+        printf("\nData accepted from application: %d bytes", grabbed_bytes);
+		
+		/* build header */
+		snd_h = (STCPHeader *)sgt;
+		memset(snd_h, 0, HEADER_LEN);
+		snd_h->th_seq = ctx->snd_nxt;
+		snd_h->th_win  = CONGESTION_WIN_SIZE;
+		snd_h->th_off  = HEADER_LEN;
+
+		/* push both header and data to network */
+		passed_bytes = stcp_network_send(sd, sgt, grabbed_bytes + HEADER_LEN, NULL);
+		if (passed_bytes < 0 ) { 
+			/*todo: error? or retry?ow namy times to retry? */
+		}
+		/*update next sequence number */
+		ctx->snd_nxt += grabbed_bytes;
+	}
+}
+
 /* Process a segment received from the network */
 void receive_network_segment(mysocket_t sd, context_t *ctx)
 {
@@ -639,6 +686,8 @@ void transport_close() // Nassim
 	
 	
 }
+
+/***************************** More Helper Funcitons ****************************************/
 
 void bufferSendData(char *app_data, size_t app_data_len) // TODO: refactor
 {

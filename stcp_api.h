@@ -13,10 +13,10 @@
 /* stcp_wait_for_event() flags */
 typedef enum
 {
-    TIMEOUT             = 0, // 000
-    APP_DATA            = 1, // 001
-    NETWORK_DATA        = 2, // 010
-    APP_CLOSE_REQUESTED = 4, // 100
+    TIMEOUT             = 0,
+    APP_DATA            = 1,
+    NETWORK_DATA        = 2,
+    APP_CLOSE_REQUESTED = 4,
     ANY_EVENT           = APP_DATA | NETWORK_DATA | APP_CLOSE_REQUESTED
 } stcp_event_type_t;
 

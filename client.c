@@ -99,6 +99,7 @@ main(int argc, char *argv[])
         exit(1);
     }
 
+	// connection setup happens here
     sd = myconnect(sd, (struct sockaddr *) &sin, sizeof(struct sockaddr_in));
     if (sd < 0)
     {
@@ -106,8 +107,10 @@ main(int argc, char *argv[])
         exit(1);
     }
 
-    loop_until_end(sd);
+	// data send/receive here
+    loop_until_end(sd); 
 
+	// connection close here
     if (myclose(sd) < 0)
     {
         perror("myclose");

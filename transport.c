@@ -400,23 +400,23 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(ctx);
     assert(!ctx->done);
 
-    while (!ctx->done)
+    while (!ctx->done) /* while CSTATE_ESTABLISHED */
     {
         unsigned int event;
 
         /* see stcp_api.h or stcp_api.c for details of this function */
         /* XXX: you will need to change some of these arguments! */
 
-        event = stcp_wait_for_event(sd, 0, NULL);
+        event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
-        if( event & TIMEOUT )
+        if( event & TIMEOUT ) /* should never get here */
             continue;
 
         /* check whether it was the network, app, or a close request */
         if (event & APP_DATA) // Eliza
         {
             /* the application has requested that data be sent */
-            /* see stcp_app_recv() */
+			send_app_data(sd, ctx);
         }
 
          if (event & NETWORK_DATA) // Kelly
@@ -436,7 +436,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 }
 
 
-/**********************************************************************/
+/****************************** Helper Functions ****************************************/
 /* our_dprintf
  *
  * Send a formatted message to stdout.
@@ -542,6 +542,14 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
     }
 }
 
+/**************************** Event Handlers *********************************************/
+
+/* Process a segment received from the network */
+void send_app_data(mysocket_t sd, context_t *ctx)
+{
+	
+}
+
 /* Process a segment received from the network */
 void receive_network_segment(mysocket_t sd, context_t *ctx)
 {
@@ -639,6 +647,8 @@ void transport_close() // Nassim
 	
 	
 }
+
+/***************************** More Helper Funcitons ****************************************/
 
 void bufferSendData(char *app_data, size_t app_data_len) // TODO: refactor
 {

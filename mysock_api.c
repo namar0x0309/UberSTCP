@@ -154,7 +154,7 @@ int mylisten(mysocket_t sd, int backlog)
 }
 
 /* close the given mysocket.  note that the semantics of myclose() differ
- * slightly from a regular close(); STCP doesn't implement TIME_WAIT, so
+ * slightly from a regular close(); STCP doesn't implement WAIT_TIME, so
  * myclose() simply discards all knowledge of the connection once the
  * connection is terminated.
  */

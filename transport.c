@@ -46,14 +46,6 @@ enum {
     LAST_ACK,       // Waiting for an acknowledgment of the cnx termination request previously sent to the remote TCP
     TIME_WAIT,      // Waiting for enough time to pass to be sure the remote TCP received the ACK of its cxn termination request
     CLOSED,         // No connection
-    CSTATE_SEND_SYN,
-    CSTATE_WAIT_FOR_SYN,
-    CSTATE_WAIT_FOR_SYN_ACK,
-    CSTATE_WAIT_FOR_ACK,
-    //CSTATE_SEND_FIN,        /* same as FIN-WAIT-1? */
-    //CSTATE_FIN_RECVD,       /* same as CLOSING? */
-    //CSTATE_WAIT_FOR_FIN,    /* same as FIN-WAIT-2? */
-    //CSTATE_CLOSED
 }; 
 
 
@@ -63,8 +55,6 @@ typedef struct
     bool_t done;    /* TRUE once connection is closed */
 
     int connection_state;   /* state of the connection (established, etc.) */
-
-    tcp_seq receiver_initial_seq_num;
 
     /* any other connection-wide global variables go here */
     mysocket_t sd;

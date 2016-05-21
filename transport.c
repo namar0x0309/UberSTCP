@@ -30,35 +30,30 @@
 #define SENDER_WIN_SIZE   3072
 #define MSS_LEN				536
 #define SYN_REC_DATA        10
-#define TIME_WAIT           4       // seconds
-/*
-      FIN-WAIT-1 STATE - waiting for a connection termination request from the
-                            remote TCP, or an acknowledgment of the connection
-                            termination request previously sent
-      FIN-WAIT-2 STATE - waiting for a connection termination request from the
-                            remote TCP
-      CLOSE-WAIT STATE - waiting for a connection termination request from the
-                            local user
-      CLOSING STATE    - waiting for a connection termination request
-                            acknowledgment from the remote tcp
-      LAST-ACK STATE   - waiting for an acknowledgment of the connection
-                            termination request previously sent to the remote
-                            TCP (which includes an acknowledgment of its
-                            connection termination request).
-      TIME-WAIT STATE  - waiting for enough time to pass to be sure the remote
-                            TCP received the acknowledgment of its connection
-                            termination request
-*/
-enum { 
+#define WAIT_TIME           4       // seconds
+
+
+// RFC 793 [Page 21]
+enum {
+    LISTEN,         // Waiting for a cxn request from any remote TCP & port
+    SYN_SENT,       // Waiting for a matching cxn request after having sent a cxn request
+    SYN_RECEIVED,   // Waiting for a confirming cxn request ack after having both received and sent a cxn request
+    ESTABLISHED,    // An open cnx; data received can be delivered to the user
+    FIN_WAIT_1,     // Waiting for a cnx termination request from the remote TCP, or ACK of the cxn termination request previously sent
+    FIN_WAIT_2,     // Waiting for a cnx termination request from the remote TCP
+    CLOSE_WAIT,     // Waiting for a cnx termination request from the local user
+    CLOSING,        // Waiting for a cnx termination request ACK from the remote TCP
+    LAST_ACK,       // Waiting for an acknowledgment of the cnx termination request previously sent to the remote TCP
+    TIME_WAIT,      // Waiting for enough time to pass to be sure the remote TCP received the ACK of its cxn termination request
+    CLOSED,         // No connection
     CSTATE_SEND_SYN,
     CSTATE_WAIT_FOR_SYN,
     CSTATE_WAIT_FOR_SYN_ACK,
     CSTATE_WAIT_FOR_ACK,
-    CSTATE_ESTABLISHED,
-    CSTATE_SEND_FIN,        /* same as FIN-WAIT-1? */
-    CSTATE_FIN_RECVD,       /* same as CLOSING? */
-    CSTATE_WAIT_FOR_FIN,    /* same as FIN-WAIT-2? */
-    CSTATE_CLOSED 
+    //CSTATE_SEND_FIN,        /* same as FIN-WAIT-1? */
+    //CSTATE_FIN_RECVD,       /* same as CLOSING? */
+    //CSTATE_WAIT_FOR_FIN,    /* same as FIN-WAIT-2? */
+    //CSTATE_CLOSED
 }; 
 
 
@@ -68,25 +63,22 @@ typedef struct
     bool_t done;    /* TRUE once connection is closed */
 
     int connection_state;   /* state of the connection (established, etc.) */
-    tcp_seq initial_sequence_num;
+
     tcp_seq receiver_initial_seq_num;
 
     /* any other connection-wide global variables go here */
     mysocket_t sd;
 
-    /* Send Sequence Variables (RFC 793 Section 3.2 & 3.3) */
-    tcp_seq snd_una;    /* oldest unacknowledged sequence number */
-    tcp_seq snd_nxt;    /* next sequence number to be sent */
-    unsigned int sender_win; // called SND.WND in the RFC
-    // ISS in the RFC is called initial_sequence_num here
+    /* Send Sequence Variables; RFC 793 [Page 25] */
+    tcp_seq snd_una;        // oldest unacknowledged sequence number
+    tcp_seq snd_nxt;        // next sequence number to be sent
+    unsigned int snd_wnd;   // send window
+    tcp_seq iss;
 
-    /* Receive Sequence Variables (RFC 793 Section 3.2  & 3.3) */
-    tcp_seq rcv_nxt;    /* next sequence number expected on an incoming segment,
-                           and is the left or lower edge of the receive window */
-    // RCV.WND in the RFC is called RECEIVER_WIN_SIZE here
-    // IRS in the RFC is called receiver_initial_seq_num here
-  
-		
+    /* Receive Sequence Variables RFC 793 [Page 25] */
+    tcp_seq rcv_nxt;        // next sequence number expected on an incoming segment, and is the left or lower edge of the receive window
+    unsigned int rcv_wnd;   // receive window
+    tcp_seq irs;            // initial receive sequence number
 		
 		// REfactor
     tcp_seq expected_sequence_num_ptr;   /* pointer to the recv_window corresponding to the receive window */
@@ -161,7 +153,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         ctx->connection_state = CSTATE_WAIT_FOR_SYN;
         attempts = 0;
         
-        while( ctx->connection_state != CSTATE_ESTABLISHED )  // loop where we wait for events
+        while( ctx->connection_state != ESTABLISHED )  // loop where we wait for events
         {
             switch( ctx->connection_state )
             {
@@ -200,7 +192,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         
                         // FILL HEADER
                         syn_ack_h->th_ack       = rcv_h->th_seq + 1;
-                        syn_ack_h->th_seq       = ctx->initial_sequence_num;
+                        syn_ack_h->th_seq       = ctx->ISS;
                         syn_ack_h->th_flags     = 0 | TH_ACK | TH_SYN;
                         syn_ack_h->th_win  = CONGESTION_WIN_SIZE;
                         syn_ack_h->th_off  = TCPHEADER_OFFSET;
@@ -239,7 +231,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                     /*
                     gettimeofday( &cur_time, NULL );
                     abs_time = (struct timespec* ) (&cur_time );
-                    abs_time->tv_sec += TIME_WAIT; // wait for next packet*/
+                    abs_time->tv_sec += WAIT_TIME; // wait for next packet*/
                     wait_flags = 0 | NETWORK_DATA;
                     
                     event = stcp_wait_for_event( ctx->sd, wait_flags, NULL); //abs_time );
@@ -263,7 +255,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         ctx->snd_una                  = rcv_h->th_ack;
 
                         if( rcv_h->th_flags & TH_ACK )
-                            ctx->connection_state = CSTATE_ESTABLISHED;
+                            ctx->connection_state = ESTABLISHED;
 
                         // free up allocations
                         
@@ -289,7 +281,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
         ctx->connection_state = CSTATE_SEND_SYN;
         attempts              = 0;
         
-        while( ctx->connection_state != CSTATE_ESTABLISHED )
+        while( ctx->connection_state != ESTABLISHED )
         {
             switch( ctx->connection_state )
             {
@@ -307,7 +299,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                     // syn header
                     syn_h->th_win   = RECEIVER_WIN_SIZE;
                     syn_h->th_flags = 0 | TH_SYN;
-                    syn_h->th_seq   = ctx->initial_sequence_num;
+                    syn_h->th_seq   = ctx->ISS;
                     syn_h->th_off   = TCPHEADER_OFFSET;
                     
                     // send it
@@ -332,7 +324,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                     
                     /*gettimeofday( &cur_time, NULL );
                     abs_time = (struct timespec* ) (&cur_time );
-                    abs_time->tv_sec += TIME_WAIT; // wait for next packet*/
+                    abs_time->tv_sec += WAIT_TIME; // wait for next packet*/
                     wait_flags = 0 | NETWORK_DATA;
                     
                     event = stcp_wait_for_event( ctx->sd, wait_flags, NULL);//abs_time );
@@ -355,7 +347,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                         // filling ack header
                         ack_h->th_off   = TCPHEADER_OFFSET;
                         ack_h->th_ack   = rcv_h->th_seq + 1;
-                        ack_h->th_seq   = ctx->initial_sequence_num;
+                        ack_h->th_seq   = ctx->ISS;
                         ack_h->th_flags = 0 | TH_ACK; 
                         ack_h->th_win   = RECEIVER_WIN_SIZE;
 
@@ -369,7 +361,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
                             errno = ECONNREFUSED;
                     
                         if( rcv_h->th_flags & TH_ACK )
-                            ctx->connection_state = CSTATE_ESTABLISHED;
+                            ctx->connection_state = ESTABLISHED;
                             
                         // free up allocations
                         rcv_h = NULL;
@@ -399,7 +391,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
     } // else - (Active Connection)
     
     // after loop
-    ctx->connection_state = CSTATE_ESTABLISHED;
+    ctx->connection_state = ESTABLISHED;
     stcp_unblock_application(sd);
 //    control_loop(sd, ctx);
 
@@ -415,10 +407,10 @@ static void generate_initial_seq_num(context_t *ctx)
 
 #ifdef FIXED_INITNUM
     /* please don't change this! */
-    ctx->initial_sequence_num = 1;
+    ctx->ISS = 1;
 #else
     /* you have to fill this up */
-    /*ctx->initial_sequence_num =;*/
+    /*ctx->ISS =;*/
 #endif
 }
 
@@ -436,7 +428,7 @@ static void generate_initial_seq_num(context_t *ctx)
      assert(ctx);
      assert(!ctx->done);
 
-     while (!ctx->done) /* while CSTATE_ESTABLISHED */
+     while (!ctx->done) /* while ESTABLISHED */
      {
          unsigned int event;
 

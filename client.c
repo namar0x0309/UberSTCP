@@ -178,7 +178,7 @@ loop_until_end(int sd)
             break;
         }
 
-        printf("server: %s\n", line);
+        printf("\n\tserver: %s\n", line);
         fflush(stdout);
 
         /* Parse the response from the server */

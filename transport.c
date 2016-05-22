@@ -199,7 +199,8 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 		
         /* get data*/
 		payload_len = stcp_app_recv(sd, payload, send_capacity);
-        printf("\nData accepted from application: %lu bytes", payload_len);
+		char sample[40] = ""; memcpy(sample, payload, payload_len);
+        printf("\nData accepted from application: %s, %lu bytes", sample, payload_len);
 		
 		/* build header */
 		memset(snd_h, 0, HEADER_LEN);
@@ -247,7 +248,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     /* Receive the segment and extract the header from it */
     seg_len_incl_hdr = stcp_network_recv( sd, seg, seg_len_incl_hdr );
     rcv_h = (STCPHeader*)seg;
-    printf("\nSegment received");
+    printf("\nSegment received, %d", seg_len_incl_hdr);
 
     /* Extract info from received header */
     seg_len = seg_len_incl_hdr - HEADER_LEN - TCP_OPTIONS_LEN(seg);
@@ -274,9 +275,10 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 		/// huh ???
         /* Trim off any portion of the data that we've already received */  
         if (seg_seq < ctx->rcv_nxt) {
-            rcv_h->th_off -= (ctx->rcv_nxt - seg_seq);
-            seg_len -= (ctx->rcv_nxt - seg_seq);
+            //rcv_h->th_off -= (ctx->rcv_nxt - seg_seq);
+            //seg_len -= (ctx->rcv_nxt - seg_seq);
             seg_seq = ctx->rcv_nxt;
+			printf("\n\terror: received duplicates in packet?");
         }
 
         // If this is a SYN, ignore the packet; RFC 793 [Page 71]

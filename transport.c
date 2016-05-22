@@ -26,7 +26,6 @@
 #define CONGESTION_WIN_SIZE 3072
 #define RECEIVER_WIN_SIZE   3072
 #define SENDER_WIN_SIZE   3072
-#define MSS_LEN				536
 #define SYN_REC_DATA        10
 #define WAIT_TIME           4       // seconds
 
@@ -187,13 +186,13 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 	char *payload;
 	size_t payload_len; /* how many bytes actually read from application */
 	ssize_t passed_bytes; /* how many bytes were able to send to network */
-	STCPHeader *snd_h = ctx->snd_h;
+	STCPHeader *snd_h = &ctx->snd_h;
     
 	/* send data only if sender window is not full */
 	ssize_t send_capacity = ctx->snd_una + ctx->snd_wnd - 1 - ctx->snd_nxt;  /* rfc 793 [p. 83]*/
 	if( send_capacity > 0 ){
 		/* adjust max amount of data we can send*/
-		if (send_capacity > MSS_LEN) { send_capacity = MSS_LEN;}
+		if (send_capacity > STCP_MSS) { send_capacity = STCP_MSS;}
      
 		/* allocate space for header and data */
 		payload = (char *) malloc((send_capacity) * sizeof(char));  /* why not permaently allocate 1-MSS buffer globally and reuse it? */
@@ -218,7 +217,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 		ctx->snd_nxt += payload_len;
 		
 		/*free memory*/
-		free(sgt);
+		free(payload);
 	 }
  }
 ///>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -231,7 +230,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 	snd_h = &(ctx->snd_h);
 	memset(snd_h, 0, HEADER_LEN);
 	 
-    char *seg;
+    char *seg, *payload;
     ssize_t seg_len_incl_hdr;
 
     // Current Segment Variables; RFC 793 [Page 25]
@@ -241,7 +240,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     ssize_t seg_wnd;    // segment window
 
     /* Allocation */
-    seg_len_incl_hdr = STCP_MSS;
+    seg_len_incl_hdr = STCP_MSS + HEADER_LEN;
     seg = (char*)malloc( seg_len_incl_hdr * sizeof( char ) );
     assert( seg );
 
@@ -251,7 +250,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     printf("\nSegment received");
 
     /* Extract info from received header */
-    seg_len = seg_len_incl_hdr - rcv_h->th_off;
+    seg_len = seg_len_incl_hdr - HEADER_LEN - TCP_OPTIONS_LEN(seg);
     seg_seq = rcv_h->th_seq;
     seg_ack = rcv_h->th_ack;
     seg_wnd = rcv_h->th_win;
@@ -263,14 +262,17 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         /* Check sequence number
          * If the segment contains data that comes after the next byte we're expecting,
-         * send an ACK for the next expected byte and drop the packet (by returning) */
+         * send error */
         if (seg_len > 0 && seg_seq > ctx->rcv_nxt) {
             // headerSend(ctx->rcv_nxt);   /// TODO: make sure headerSend() sends an ACK like the code implies
+			/// todo: send error
+			printf("\n\terror: received packet out of order");
             free(seg);
             return;
         }
 
-        /* Trim off any portion of the data that we've already received */
+		/// huh ???
+        /* Trim off any portion of the data that we've already received */  
         if (seg_seq < ctx->rcv_nxt) {
             rcv_h->th_off -= (ctx->rcv_nxt - seg_seq);
             seg_len -= (ctx->rcv_nxt - seg_seq);
@@ -279,8 +281,9 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
         // If this is a SYN, ignore the packet; RFC 793 [Page 71]
         if (rcv_h->th_flags & TH_SYN) {
-            /// TODO: set error? or ignore?
-			free(seg);
+            /// TODO: set error
+			printf("\n\terror: received SYN when payload expected");
+            free(seg);
             return;
         }
 
@@ -317,9 +320,11 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         /* Process the segment data; RFC 793 [Page 74] */ /// TODO: Handle according to state
         if (seg_len > 0) {
             printf("\nHandling received data beginning at sequence number %u,", seg_seq);
-            /** TODO: See if Nassim has the handle_app_data() code available; otherwise
-             * I'll write something to pass the data to the application */
-
+            
+			// assume window sizes were respected
+			payload = seg + TCP_DATA_START(seg);
+			stcp_app_send(sd, payload, seg_len);
+			
             /* We've now taken responsibility for delivering the data to the user, so
              * we ACK receipt of the data and advance rcv_nxt over the data accepted */
             ctx->rcv_nxt += seg_len;

@@ -184,11 +184,10 @@ static void control_loop(mysocket_t sd, context_t *ctx)
  void sendAppData(mysocket_t sd, context_t *ctx)
  {
 	printf( "\n%s", __FUNCTION__ );
-	size_t grabbed_bytes; /* how many bytes actually read from application */
+	char *payload;
+	size_t payload_len; /* how many bytes actually read from application */
 	ssize_t passed_bytes; /* how many bytes were able to send to network */
-	char *sgt, *data;
-	size_t data_len;
-	STCPHeader *snd_h;
+	STCPHeader *snd_h = ctx->snd_h;
     
 	/* send data only if sender window is not full */
 	ssize_t send_capacity = ctx->snd_una + ctx->snd_wnd - 1 - ctx->snd_nxt;  /* rfc 793 [p. 83]*/
@@ -196,30 +195,27 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 		/* adjust max amount of data we can send*/
 		if (send_capacity > MSS_LEN) { send_capacity = MSS_LEN;}
      
-
 		/* allocate space for header and data */
-		sgt = (char *) malloc((send_capacity) * sizeof(char));  /* why not permaently allocate 1-MSS buffer globally and reuse it? */
-		data = sgt + HEADER_LEN;
-		data_len = send_capacity - HEADER_LEN;
+		payload = (char *) malloc((send_capacity) * sizeof(char));  /* why not permaently allocate 1-MSS buffer globally and reuse it? */
 		
         /* get data*/
-		grabbed_bytes = stcp_app_recv(sd, data, data_len);
-        printf("\nData accepted from application: %lu bytes", grabbed_bytes);
+		payload_len = stcp_app_recv(sd, payload, send_capacity);
+        printf("\nData accepted from application: %lu bytes", payload_len);
 		
 		/* build header */
-		snd_h = (STCPHeader *)sgt;
 		memset(snd_h, 0, HEADER_LEN);
 		snd_h->th_seq = ctx->snd_nxt;
 		snd_h->th_win  = CONGESTION_WIN_SIZE;
 		snd_h->th_off  = HEADER_LEN;
 
 		/* push both header and data to network */
-		passed_bytes = stcp_network_send(sd, sgt, grabbed_bytes + HEADER_LEN, NULL);
+		passed_bytes = stcp_network_send(sd, snd_h, HEADER_LEN, payload, payload_len, NULL);
 		if (passed_bytes < 0 ) { 
-			/** todo: error? or retry?ow namy times to retry? */
+			/** todo: error? or retry?how many times to retry? */
+			printf("\n\terror: network send failed");
 		}
 		/*update next sequence number */
-		ctx->snd_nxt += grabbed_bytes;
+		ctx->snd_nxt += payload_len;
 		
 		/*free memory*/
 		free(sgt);

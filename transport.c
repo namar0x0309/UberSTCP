@@ -44,7 +44,6 @@ enum {
     CLOSE_WAIT,     // Waiting for a cnx termination request from the local user
     CLOSING,        // Waiting for a cnx termination request ACK from the remote TCP
     LAST_ACK,       // Waiting for an acknowledgment of the cnx termination request previously sent to the remote TCP
-    TIME_WAIT,      // Waiting for enough time to pass to be sure the remote TCP received the ACK of its cxn termination request
     CLOSED,         // No connection
 }; 
 
@@ -455,7 +454,7 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
      seg_wnd = rcv_h->th_win;
      ctx->snd_wnd = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE ); // TODO: This shouldn't go here in case it's a bad packet
 
-     // RFC 793 [Page 65]
+     // LISTEN state; RFC 793 [Page 65]
      if (ctx->connection_state == LISTEN) {
 
          // Check for a SYN; Send SYNACK if received
@@ -491,7 +490,7 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
              return;
          }
 
-     // RFC 793 [Page 66]
+     // SYN-SENT state; RFC 793 [Page 66]
      } else if (ctx->connection_state = SYN_SENT) {
 
          // If this is an ACK
@@ -504,20 +503,20 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
              }
          }
 
-         // If this is a SYN (Simultaneous Connection)
+         // If this is a SYN (Simultaneous Connection); RFC 793 [Page 67]
          if (rcv_h->th_flags & TH_SYN) {
              ctx->rcv_nxt = seg_seq + 1;
              ctx->irs = seg_seq;
 
              if (seg_ack > ctx->snd_una) ctx->snd_una = seg_ack;
 
-             // If our SYN has been ACKed, enter ESTABLISHED state
+             // If our SYN has been ACKed, enter ESTABLISHED state; RFC 793 [Page 68]
              if (ctx->snd_una > ctx->iss) {
                  ctx->connection_state = ESTABLISHED;
                  ctx->snd_wnd = seg_wnd;
                  stcp_unblock_application(sd);
 
-             // Otherwise, enter SYN_RECEIVED and send SYNACK
+             // Otherwise, enter SYN_RECEIVED and send SYNACK; RFC 793 [Page 68]
              } else {
 
                  // Set up the SYNACK
@@ -540,8 +539,8 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
 
          }
 
-     // SYN-RECEIVED, ESTABLISHED, FIN-WAIT-1, FIN-WAIT-2, CLOSE-WAIT, CLOSING, LAST-ACK, or TIME-WAIT state
-     // RFC 793 [Page 69]
+     // If we're past the handshake: SYN-RECEIVED, ESTABLISHED, FIN-WAIT-1, FIN-WAIT-2,
+     // CLOSE-WAIT, CLOSING, LAST-ACK, or TIME-WAIT states; RFC 793 [Page 69]
      } else {
 
          /* Check sequence number
@@ -554,7 +553,7 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
              return;
          }
 
-         /* Trim off any portion of the data that we've already received */
+         // Trim off any portion of the data that we've already received
          if (seg_seq < ctx->rcv_nxt) {
              rcv_h->th_off -= (ctx->rcv_nxt - seg_seq);
              seg_len -= (ctx->rcv_nxt - seg_seq);
@@ -567,12 +566,12 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
              return;
          }
 
-         /* Check the ACK field; RFC 793 [Page 72] */
+         // Check the ACK field; RFC 793 [Page 72]
          if (rcv_h->th_flags & TH_ACK) {
              seg_ack = rcv_h->th_ack;
              printf("\nProcessing ACK %u", seg_ack);
 
-             // If in the SYN-RECEIVED state
+             // SYN-RECEIVED state; RFC 793 [Page 72]
              if (ctx->connection_state == SYN_RECEIVED) {
 
                  // If the ack is within the send window, enter ESTABLISHED state
@@ -587,8 +586,11 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
                      return;
                  }
 
-             // If in the ESTABLISHED state
-             } else if (ctx->connection_state == ESTABLISHED) {
+             // ESTABLISHED, FIN-WAIT-1, FIN-WAIT-2, or CLOSE-WAIT state; RFC 793 [Page 72]
+             } else if (ctx->connection_state == ESTABLISHED ||
+                        ctx->connection_state == FIN_WAIT_1 ||
+                        ctx->connection_state == FIN_WAIT_2 ||
+                        ctx->connection_state == CLOSE_WAIT) {
 
                  // If the ACK is within the send window, update the last unacknowledged byte and send window
                  if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
@@ -598,15 +600,28 @@ void appDataProcess(char *segment, ssize_t segment_len, STCPHeader *header, size
 
                  // If it's a duplicate of the most recent ACK, just update the send window
                  } else if (ctx->snd_una = seg_ack) {
+                     printf("\nDuplicate ACK");
                      ctx->snd_wnd = rcv_h->th_win;
                  }
 
-             // If in FIN-WAIT-1, FIN-WAIT-2, CLOSE-WAIT, CLOSING, LAST-ACK, or TIME-WAIT
-             } else {
-                 // TODO: Handle these states
+                 // If FIN-WAIT-1 state and this ACK is for our FIN, enter FIN-WAIT-2 state; RFC 793 [Page 73]
+                 // We know it's a FIN ACK if the ACK number equals our send-next number; RFC 793 [Page 39]
+                 if (ctx->connection_state == FIN_WAIT_1 && seg_ack == ctx->snd_nxt) {
+                     printf("\nOur FIN has been ACKed. Entering FIN-WAIT-2.");
+                     ctx->connection_state = FIN_WAIT_2;
+                 }
+
+             // IF CLOSING or LAST_ACK state and this ACK is for our FIN, we're
+             // done (no TIME-WAIT in STCP); Enter CLOSED state and return; RFC 793 [Page 73]
+             } else if ((ctx->connection_state == CLOSING ||
+                         ctx->connection_state == LAST_ACK) &&
+                        seg_ack == ctx->snd_nxt) {
+                 printf("\nOur FIN has been ACKed. We're all done here.");
+                 ctx->connection_state = CLOSED;
                  free(seg);
                  return;
              }
+
              // TODO: stop the timer if it is running and start it if there are unACKed segments (I'm hoping someone else has already gotten a timer set up, otherwise I'll take care of it)
 
              printf("\nDone processing ACK");

@@ -108,13 +108,13 @@ main(int argc, char *argv[])
     }
 
 	// data send/receive here
-    loop_until_end(sd); 
+//    loop_until_end(sd); 
 
 	// connection close here
-    if (myclose(sd) < 0)
-    {
-        perror("myclose");
-    }
+    // if (myclose(sd) < 0)
+    // {
+        // perror("myclose");
+    // }
 
     return 0;
 }                               /* end main() */

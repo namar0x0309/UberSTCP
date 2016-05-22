@@ -85,8 +85,9 @@ static void receiveNetworkSegment(mysocket_t sd, context_t *ctx);
 void sendAppData(mysocket_t sd, context_t *ctx);
 void setupSequence(mysocket_t sd, context_t *ctx, bool is_active);
 void teardownSequence(mysocket_t sd, context_t *ctx, bool is_active);
+void our_dprintf(const char *format,...);
 
-static context_t *ctx;
+// context_t *ctx;
 
 /* initialise the transport layer, and start the main loop, handling
  * any data from the peer or the application.  this function should not
@@ -201,7 +202,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 		
          /* get data*/
 		 grabbed_bytes = stcp_app_recv(sd, data, data_len);
-         printf("\nData accepted from application: %d bytes", grabbed_bytes);
+         printf("\nData accepted from application: %lu bytes", grabbed_bytes);
 		
 		 /* build header */
 		 snd_h = (STCPHeader *)sgt;
@@ -226,7 +227,10 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 // /* Process a segment received from the network */
  void receiveNetworkSegment(mysocket_t sd, context_t *ctx) 
  {
-     STCPHeader *rcv_h;
+     STCPHeader *rcv_h, *snd_h;
+	 snd_h = &(ctx->snd_h);
+	 memset(snd_h, 0, HEADER_LEN);
+	 
      char *seg;
      ssize_t seg_len_incl_hdr;
 
@@ -261,8 +265,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
           * If the segment contains data that comes after the next byte we're expecting,
           * send an ACK for the next expected byte and drop the packet (by returning) */
          if (seg_len > 0 && seg_seq > ctx->rcv_nxt) {
-             headerSend(
-                     ctx->rcv_nxt);   /// TODO: make sure headerSend() sends an ACK like the code implies
+             // headerSend(ctx->rcv_nxt);   /// TODO: make sure headerSend() sends an ACK like the code implies
              free(seg);
              return;
          }
@@ -277,7 +280,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
          // If this is a SYN, ignore the packet; RFC 793 [Page 71]
          if (rcv_h->th_flags & TH_SYN) {
              /// TODO: set error? or ignore?
-			 free(seg)
+			 free(seg);
              return;
          }
 
@@ -296,7 +299,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
                      ctx->snd_wnd = rcv_h->th_win;
 
                  // If it's a duplicate of the most recent ACK, just update the send window
-                 } else if (ctx->snd_una = seg_ack) {
+                 } else if (ctx->snd_una == seg_ack) {
                      ctx->snd_wnd = rcv_h->th_win;
                  }
 
@@ -311,18 +314,24 @@ static void control_loop(mysocket_t sd, context_t *ctx)
              printf("\nDone processing ACK");
          }
 
-         /* Process the segment text; RFC 793 [Page 74] */ /// TODO: Handle according to state
-         if (seg_len > 0) {
-             printf("\nHandling received data beginning at sequence number %u,",
-                    seg_seq);
-             /** TODO: See if Nassim has the handle_app_data() code available; otherwise
-              * I'll write something to pass the data to the application */
+        /* Process the segment data; RFC 793 [Page 74] */ /// TODO: Handle according to state
+        if (seg_len > 0) {
+            printf("\nHandling received data beginning at sequence number %u,", seg_seq);
+            /** TODO: See if Nassim has the handle_app_data() code available; otherwise
+             * I'll write something to pass the data to the application */
 
-             /* We've now taken responsibility for delivering the data to the user, so
-              * we ACK receipt of the data and advance rcv_nxt over the data accepted */
-             ctx->rcv_nxt += seg_len;
-             headerSend(
-                     ctx->rcv_nxt);   /// TODO: make sure headerSend() sends an ACK like the code implies
+            /* We've now taken responsibility for delivering the data to the user, so
+             * we ACK receipt of the data and advance rcv_nxt over the data accepted */
+            ctx->rcv_nxt += seg_len;
+            snd_h->th_seq = ctx->snd_nxt; 
+			snd_h->th_ack = ctx->rcv_nxt;
+			snd_h->th_flags = 0 | TH_ACK;
+			snd_h->th_win = ctx->rcv_wnd;
+			snd_h->th_off = TCPHEADER_OFFSET;
+			
+			printf("\nSending SYNACK");
+			stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
+
          }
 
          if (rcv_h->th_flags *
@@ -334,9 +343,9 @@ static void control_loop(mysocket_t sd, context_t *ctx)
      free(seg);
  }
 
-void setupSequence(mysocket_t sd, context_t *ctx){
+void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 	STCPHeader *rcv_h, *snd_h;
-    snd_h = ctx->snd_h;
+    snd_h = &ctx->snd_h;
 	memset(snd_h, 0, HEADER_LEN);
         
 	generate_initial_seq_num(ctx);
@@ -378,7 +387,6 @@ void setupSequence(mysocket_t sd, context_t *ctx){
     // Current Segment Variables; RFC 793 [Page 25]
     tcp_seq seg_seq;    // first sequence number of a segment
     tcp_seq seg_ack;    // acknowledgment from the receiving TCP (next sequence number expected by the receiving TCP)
-    ssize_t seg_len;    // the number of octets occupied by the data in the segment (counting SYN and FIN)
     ssize_t seg_wnd;    // segment window
 
 
@@ -396,7 +404,7 @@ void setupSequence(mysocket_t sd, context_t *ctx){
 		seg_ack = rcv_h->th_ack;
 		seg_wnd = rcv_h->th_win;
 		
-        if (event & (APP_DATA | APP_CLOSE_REQUESTED){ 
+        if (event & (APP_DATA | APP_CLOSE_REQUESTED)){ 
             /// TODO: set error
 			
             break;
@@ -415,8 +423,7 @@ void setupSequence(mysocket_t sd, context_t *ctx){
 					 ctx->irs = seg_seq;
 
 					 // Set up the SYNACK
-					 snd_h = (STCPHeader *) calloc(1, HEADER_LEN);
-					 assert(snd_h);
+					 memset(snd_h, 0, HEADER_LEN);
 					 snd_h->th_seq = ctx->iss;
 					 snd_h->th_ack = ctx->rcv_nxt;
 					 snd_h->th_flags = 0 | TH_ACK | TH_SYN;
@@ -426,7 +433,6 @@ void setupSequence(mysocket_t sd, context_t *ctx){
 					 // Send the SYNACK
 					 printf("\nSending SYNACK");
 					 stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
-					 free(snd_h);
 
 					 // Update sequence numbers and connection state
 					 ctx->snd_nxt = ctx->iss + 1;
@@ -440,7 +446,7 @@ void setupSequence(mysocket_t sd, context_t *ctx){
 				 }
 
 			 // RFC 793 [Page 66]
-			 } else if (ctx->connection_state = SYN_SENT) {
+			 } else if (ctx->connection_state == SYN_SENT) {
 
 				 // If this is an ACK
 				 if (rcv_h->th_flags & TH_ACK) {
@@ -467,8 +473,7 @@ void setupSequence(mysocket_t sd, context_t *ctx){
 					 } else {
 
 						 // Set up the SYNACK
-						 snd_h = (STCPHeader *) calloc(1, HEADER_LEN);
-						 assert(snd_h);
+						 memset(snd_h, 0, HEADER_LEN);
 						 snd_h->th_seq = ctx->iss;
 						 snd_h->th_ack = ctx->rcv_nxt;
 						 snd_h->th_flags = 0 | TH_ACK | TH_SYN;
@@ -478,7 +483,6 @@ void setupSequence(mysocket_t sd, context_t *ctx){
 						 // Send the SYNACK
 						 printf("\nSending SYNACK");
 						 stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
-						 free(snd_h);
 
 						 // Update the connection state (already set snd_next and snd_una when we sent the SYN)
 						 ctx->connection_state = SYN_RECEIVED;
@@ -509,7 +513,8 @@ void setupSequence(mysocket_t sd, context_t *ctx){
 						} else {
 							return;
 						}
-
+					}
+				}
 			}
 			
         }
@@ -544,7 +549,7 @@ void our_dprintf(const char *format,...)
 
     assert(format);
     va_start(argptr, format);
-    vsnour_dprintf(buffer, sizeof(buffer), format, argptr);
+    vsnprintf(buffer, sizeof(buffer), format, argptr);
     va_end(argptr);
     fputs(buffer, stdout);
     fflush(stdout);

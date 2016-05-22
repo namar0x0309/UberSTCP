@@ -84,6 +84,7 @@ static void receiveNetworkSegment(mysocket_t sd, context_t *ctx);
 void sendAppData(mysocket_t sd, context_t *ctx);
 void setupSequence(mysocket_t sd, context_t *ctx, bool is_active);
 void teardownSequence(mysocket_t sd, context_t *ctx, bool is_active);
+void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags);
 void our_dprintf(const char *format,...);
 
 // context_t *ctx;
@@ -198,7 +199,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
         printf("\nData accepted from application: %s, %lu bytes", sample, payload_len);
 		
 		/* build header */
-		fillHeader(snd_h, 0);
+		fillHeader(snd_h, ctx, 0);
 		
 		/* push both header and data to network */
 		passed_bytes = stcp_network_send(sd, snd_h, HEADER_LEN, payload, payload_len, NULL);
@@ -318,7 +319,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
             /* We've now taken responsibility for delivering the data to the user, so
              * we ACK receipt of the data and advance rcv_nxt over the data accepted */
             ctx->rcv_nxt += seg_len;
-            fillHeader(snd_h, TH_ACK);
+            fillHeader(snd_h, ctx, TH_ACK);
 			
 			printf("\n Sending ACK, %u", ctx->rcv_nxt);
 			stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
@@ -348,7 +349,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
         ctx->connection_state = CLOSED;
 
         // Set up SYN header
-        fillHeader(snd_h, TH_SYN);
+        fillHeader(snd_h, ctx, TH_SYN);
         
         // Send the SYN
         if( stcp_network_send( sd, snd_h, HEADER_LEN, NULL ) == -1  )
@@ -412,7 +413,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					 ctx->irs = seg_seq;
 
 					 // Set up the SYNACK
-					 fillHeader(snd_h, TH_ACK | TH_SYN);
+					 fillHeader(snd_h, ctx, TH_ACK | TH_SYN);
 					 
 					 // Send the SYNACK
 					 printf("\nSending SYNACK"); fflush(stdout);
@@ -457,7 +458,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 						 printf("\n ESTABLISHED");
 						 
 						// ACK the SYN/SYNACK just received
-						 fillHeader(snd_h, TH_ACK);
+						 fillHeader(snd_h, ctx, TH_ACK);
 						 
 						 // Send the ACK
 						 printf("\nSending ACK");
@@ -467,7 +468,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					 } else {
 
 						 // Set up the SYNACK
-						 fillHeader(snd_h, TH_ACK | TH_SYN);
+						 fillHeader(snd_h, ctx, TH_ACK | TH_SYN);
 						 
 						 // Send the SYNACK
 						 printf("\nSending SYNACK");
@@ -519,12 +520,12 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool is_active){
 }
 
 /****************************** Helper Functions ****************************************/
-void fillHeader(STCPHeader* snd_h, int flags){
+void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags){
 	memset(snd_h, 0, HEADER_LEN);
 	
 	if (flags & TH_SYN)
 		snd_h->th_seq = ctx->iss;
-	else if (!flags) // flags == 0
+	else if (!flags || flags & TH_FIN) // flags == 0
 		snd_h->th_seq = ctx->snd_nxt;
 		
 	if (flags & TH_ACK)

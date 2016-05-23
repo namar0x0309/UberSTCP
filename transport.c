@@ -37,15 +37,14 @@
 // RFC 793 [Page 21]
 enum {
     LISTEN,         // Waiting for a cxn request from any remote TCP & port
-    SYN_SENT,       // Waiting for a matching cxn request after having sent a cxn request
-    SYN_RECEIVED,   // Waiting for a confirming cxn request ack after having both received and sent a cxn request
+    SYN_SENT,       // Waiting for SYN-ACK after having sent a SYN
+    SYN_RECEIVED,   // Waiting for ACK after receiving SYN and sending SYN-ACK or SYN
     ESTABLISHED,    // An open cnx; data received can be delivered to the user
-    FIN_WAIT_1,     // Waiting for a cnx termination request from the remote TCP, or ACK of the cxn termination request previously sent
-    FIN_WAIT_2,     // Waiting for a cnx termination request from the remote TCP
-    CLOSE_WAIT,     // Waiting for a cnx termination request from the local user
-    CLOSING,        // Waiting for a cnx termination request ACK from the remote TCP
-    LAST_ACK,       // Waiting for an acknowledgment of the cnx termination request previously sent to the remote TCP
-    TIME_WAIT,      // Waiting for enough time to pass to be sure the remote TCP received the ACK of its cxn termination request
+    FIN_WAIT_1,     // Initiated close; now waiting for FIN-ACK, or FIN if simultaneous close
+    FIN_WAIT_2,     // Initiated close; now waiting for FIN from the remote TCP
+    CLOSE_WAIT,     // Passive closer waiting for a close request from the app
+    CLOSING,        // Simultaneous close - waiting for FIN-ACK from the remote TCP
+    LAST_ACK,       // Passive closer waiting for last FIN-ACK
     CLOSED,         // No connection
 }; 
 
@@ -67,11 +66,9 @@ typedef struct
     tcp_seq iss;
 
     /* Receive Sequence Variables RFC 793 [Page 25] */
-    tcp_seq rcv_nxt;        // next sequence number expected on an incoming segment, and is the left or lower edge of the receive window
+    tcp_seq rcv_nxt;        // next seq num expected on an incoming segment; left edge of rcv window
     unsigned int rcv_wnd;   // receive window
     tcp_seq irs;            // initial receive sequence number
-
-    // tcp_seq receiver_window;             /* receiver window size last advertised by the receiver or the other host */
 
 	// buffers :
 	char buf_snd[SENDER_WIN_SIZE];
@@ -233,8 +230,8 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
     // Current Segment Variables; RFC 793 [Page 25]
     tcp_seq seg_seq;    // first sequence number of a segment
-    tcp_seq seg_ack;    // acknowledgment from the receiving TCP (next sequence number expected by the receiving TCP)
-    ssize_t seg_len;    // the number of octets occupied by the data in the segment (counting SYN and FIN)
+    tcp_seq seg_ack;    // ack from the receiving TCP (next seq num expected by receiving TCP)
+    ssize_t seg_len;    // bytes of data in the segment (counting SYN and FIN)
     ssize_t seg_wnd;    // segment window
 
     /* Allocation */
@@ -259,78 +256,70 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     seg_wnd = rcv_h->th_win;
     ctx->snd_wnd = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE ); /// TODO: This shouldn't go here in case it's a bad packet
 
-        // KELLY TODO: SYN-RECEIVED state?
-     // If we're past the handshake: SYN-RECEIVED, ESTABLISHED, FIN-WAIT-1, FIN-WAIT-2,
-     // CLOSE-WAIT, CLOSING, LAST-ACK, or TIME-WAIT states; RFC 793 [Page 69]
+     /* Check sequence number
+      * If the segment contains data that comes after the next byte we're expecting,
+      * send error */
+     if (seg_len > 0 && seg_seq > ctx->rcv_nxt) {
+         // TODO: send error, received packet out of order
+         free(seg);
+         return;
+     }
 
+     // Trim off any portion of the data that we've already received
+     if (seg_seq < ctx->rcv_nxt) {
+         rcv_h->th_off -= (ctx->rcv_nxt - seg_seq);
+         seg_len -= (ctx->rcv_nxt - seg_seq);
+         seg_seq = ctx->rcv_nxt;
+     }
 
-         /* Check sequence number
-          * If the segment contains data that comes after the next byte we're expecting,
-          * send error */
-         if (seg_len > 0 && seg_seq > ctx->rcv_nxt) {
-             // TODO: send error, received packet out of order
-             free(seg);
-             return;
-         }
+     // If this is a SYN, ignore the packet; RFC 793 [Page 71]
+     if (rcv_h->th_flags & TH_SYN) {
+         // TODO: set error, received SYN when payload expected
+         free(seg);
+         return;
+     }
 
-         // Trim off any portion of the data that we've already received
-         if (seg_seq < ctx->rcv_nxt) {
-             rcv_h->th_off -= (ctx->rcv_nxt - seg_seq);
-             seg_len -= (ctx->rcv_nxt - seg_seq);
-             seg_seq = ctx->rcv_nxt;
-         }
+     // Check the ACK field; RFC 793 [Page 72]
+     if (rcv_h->th_flags & TH_ACK) {
+         seg_ack = rcv_h->th_ack;
+         printf("\nProcessing ACK %u", seg_ack);
 
-         // If this is a SYN, ignore the packet; RFC 793 [Page 71]
-         if (rcv_h->th_flags & TH_SYN) {
-             // TODO: set error, received SYN when payload expected
-             free(seg);
-             return;
-         }
+         // ESTABLISHED, FIN-WAIT-1, FIN-WAIT-2, CLOSE-WAIT, or CLOSING; RFC 793 [Page 72]
+         if (ctx->connection_state == ESTABLISHED ||
+             ctx->connection_state == FIN_WAIT_1 ||
+             ctx->connection_state == FIN_WAIT_2 ||
+             ctx->connection_state == CLOSE_WAIT ||
+             ctx->connection_state == CLOSING) {
 
-         // Check the ACK field; RFC 793 [Page 72]
-         if (rcv_h->th_flags & TH_ACK) {
-             seg_ack = rcv_h->th_ack;
-             printf("\nProcessing ACK %u", seg_ack);
-
-
-
-             // ESTABLISHED, FIN-WAIT-1, FIN-WAIT-2, CLOSE-WAIT, or CLOSING states; RFC 793 [Page 72]
-             if (ctx->connection_state == ESTABLISHED ||
-                        ctx->connection_state == FIN_WAIT_1 ||
-                        ctx->connection_state == FIN_WAIT_2 ||
-                        ctx->connection_state == CLOSE_WAIT ||
-                        ctx->connection_state == CLOSING) {
-
-                 // If the ACK is within the send window, update the last unacknowledged byte and send window
-                 if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
-                     printf("\nThe ACK is within the send window");
-                     ctx->snd_una = seg_ack;
-                     ctx->snd_wnd = rcv_h->th_win;
+             // If the ACK is within the send window, update last unACKed byte and send window
+             if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
+                 printf("\nThe ACK is within the send window");
+                 ctx->snd_una = seg_ack;
+                 ctx->snd_wnd = rcv_h->th_win;
 
                  // If it's a duplicate of the most recent ACK, just update the send window
-                 } else if (ctx->snd_una = seg_ack) {
-                     ctx->snd_wnd = rcv_h->th_win;
-                 }
+             } else if (ctx->snd_una = seg_ack) {
+                 ctx->snd_wnd = rcv_h->th_win;
+             }
 
-                 // If FIN-WAIT-1 state and this ACK is for our FIN, enter FIN-WAIT-2 state; RFC 793 [Page 73]
-                 // We know it's a FIN ACK if the ACK number equals our send-next number; RFC 793 [Page 39]
-                 if (ctx->connection_state == FIN_WAIT_1 && seg_ack == ctx->snd_nxt) {
-                     ctx->connection_state = FIN_WAIT_2;
+             // If FIN-WAIT-1 and this ACK is for our FIN, enter FIN-WAIT-2; RFC 793 [Page 73]
+             // We know it's a FIN ACK if the ACK num equals our send-next num; RFC 793 [Page 39]
+             if (ctx->connection_state == FIN_WAIT_1 && seg_ack == ctx->snd_nxt) {
+                 ctx->connection_state = FIN_WAIT_2;
 
-                 // IF CLOSING state and this ACK is for our FIN, we're done (no TIME-WAIT in STCP); RFC 793 [Page 73]
+                 // IF CLOSING and this ACK is for our FIN, we're done (no TIME-WAIT
+				 // in STCP); RFC 793 [Page 73]
                  // This state only exists in the Simultaneous Close Sequence; RFC 793 [Page 39]
-                 } else if (ctx->connection_state == CLOSING && seg_ack == ctx->snd_nxt) {
-                     ctx->connection_state = CLOSED;
-                     free(seg);
-                     return;
-                 }
-
+             } else if (ctx->connection_state == CLOSING && seg_ack == ctx->snd_nxt) {
+                 ctx->connection_state = CLOSED;
+                 free(seg);
+                 return;
+             }
 
              // LAST-ACK state; RFC 793 [Page 73]
-             } else if (ctx->connection_state == LAST_ACK){
+         } else if (ctx->connection_state == LAST_ACK){
 
-             }
-             // TODO: stop the timer if it is running and start it if there are unACKed segments (I'm hoping someone else has already gotten a timer set up, otherwise I'll take care of it)
+         }
 
 	/* Process the segment data; RFC 793 [Page 74] */ /// TODO: Handle according to state
 	if (seg_len > 0) {
@@ -347,7 +336,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 	 }
 
 	 if (rcv_h->th_flags *
-		 TH_FIN)  /// TODO: See if I need to handle any packets coming in during the FIN sequence
+		 TH_FIN)
 	 {
 		 teardownSequence(sd, ctx, false);
 	 }
@@ -394,7 +383,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
     // Current Segment Variables; RFC 793 [Page 25]
     tcp_seq seg_seq;    // first sequence number of a segment
-    tcp_seq seg_ack;    // acknowledgment from the receiving TCP (next sequence number expected by the receiving TCP)
+    tcp_seq seg_ack;    // ack from the receiving TCP (next seq num expected by receiving TCP)
     ssize_t seg_wnd;    // segment window
 
 	// enter syn-loop
@@ -483,7 +472,8 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 						 // Send the SYNACK
 						 stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 
-						 // Update the connection state (already set snd_next and snd_una when we sent the SYN)
+						 // Update the connection state (already set snd_next
+						 // and snd_una when we sent the SYN)
 						 ctx->connection_state = SYN_RECEIVED;
 					}
 

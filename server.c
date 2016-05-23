@@ -121,7 +121,6 @@ static void do_connection(mysocket_t sd)
     char line[256];
     int rc;
 
-
     /* loop over: 
        - get a request from the client
        - process the request
@@ -212,21 +211,23 @@ process_line(int sd, char *line)
 
     if (!*line || access(line, R_OK) < 0)
     {
-        sprintf(resp, "%s,-1,File does not exist or access denied\r\n", line);
+        sprintf(resp, "\n%s,-1,File does not exist or access denied\r\n", line);
     }
     else
     {
         if ((fd = open(line, O_RDONLY)) < 0)
         {
-            sprintf(resp, "%s,-1,File could not be opened\r\n", line);
+            sprintf(resp, "\n%s,-1,File could not be opened\r\n", line);
         }
         else
         {
-            sprintf(resp, "%s,%lu,Ok\r\n", line, lseek(fd, 0, SEEK_END));
+            sprintf(resp, "\n%s,%lu,Ok\r\n", line, lseek(fd, 0, SEEK_END));
             lseek(fd, 0, SEEK_SET);
         }
     }
   /** fprintf(stderr, "sending to client: %s of length %d bytes\n", resp, strlen(resp)); **/
+printf("\nsending to client: %s of length %lu bytes\n", resp, strlen(resp));
+fflush(stdout);
     /* Return the response to the client */
     if (mywrite(sd, resp, strlen(resp)) < 0)
     {

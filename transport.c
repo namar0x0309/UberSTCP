@@ -151,7 +151,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(ctx);
     assert(!ctx->done);
 
-    while (!ctx->done) /// todo: change to while not CLOSED
+    while (!ctx->done) /// todo: change to while not CLOSED -- I think it should be while not CLOSED or LAST-ACK
     {
 #ifdef DEBUG
 		printf("\n\tnew event (%u|%u,%u)", ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
@@ -305,13 +305,13 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		// If in the ESTABLISHED state
 		if (ctx->connection_state == ESTABLISHED) {
 
-			// If the ACK is within the send window, update the last unacknowledged byte and send window
+			// If ACK is within the send wnd, update last unACKed byte and send wnd
 			if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
 #ifdef DEBUG
 				printf("\nThe ACK is within the send window");
 #endif
 				ctx->snd_una = seg_ack;
-				ctx->snd_wnd = MIN(rcv_h->th_win, CONGESTION_WIN_SIZE);
+				ctx->snd_wnd = MIN(seg_wnd, CONGESTION_WIN_SIZE);
 
 		// If FIN-WAIT-1 & ACK is for our FIN, enter FIN-WAIT-2; RFC 793 [Page 73]
 		// It's a FIN ACK if ACK num equals our send-next num; RFC 793 [Page 39]
@@ -489,12 +489,12 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					 // If our SYN has been ACKed, enter ESTABLISHED state
 					 if (ctx->snd_una > ctx->iss) {
 						 ctx->connection_state = ESTABLISHED;
-						 ctx->snd_wnd = seg_wnd;
+						 ctx->snd_wnd = MIN(seg_wnd, CONGESTION_WIN_SIZE);
 #ifdef DEBUG
 						 printf("\n ESTABLISHED");
 #endif
 
-						// ACK the SYN/SYNACK just received
+						 // ACK the SYN/SYNACK just received
 						 fillHeader(snd_h, ctx, TH_ACK);
 						 
 						 // Send the ACK
@@ -539,7 +539,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					// If the ack is within the send window, enter ESTABLISHED state
 					if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
 						ctx->connection_state = ESTABLISHED;
-						ctx->snd_wnd = seg_wnd;
+						ctx->snd_wnd = MIN(seg_wnd, CONGESTION_WIN_SIZE);
 						ctx->snd_una = seg_ack;
 					// If the ACK is not acceptable, drop the packet and ignore
 					} else {
@@ -587,7 +587,11 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 
 		// Received packet with FIN bit set; advance through FIN seq; RFC 793 [Page 75]
 	} else {
-		// TODO: Advance RCV.NXT over the FIN
+
+		// Advance rcv_next over the FIN
+		ctx->rcv_nxt++;
+
+		// Update the state
 		if (ctx->connection_state == ESTABLISHED) {
 			ctx->connection_state = CLOSE_WAIT;
 		} else if (ctx->connection_state == FIN_WAIT_1 ||

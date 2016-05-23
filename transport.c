@@ -302,27 +302,24 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		printf("\nProcessing ACK %u", seg_ack);
 #endif
 
-		// If in the ESTABLISHED state
-		if (ctx->connection_state == ESTABLISHED) {
-
-			// If ACK is within the send wnd, update last unACKed byte and send wnd
-			if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
+		// If ACK is within the send wnd, update last unACKed byte and send wnd
+		if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
 #ifdef DEBUG
-				printf("\nThe ACK is within the send window");
+			printf("\nThe ACK is within the send window");
 #endif
-				ctx->snd_una = seg_ack;
-				ctx->snd_wnd = MIN(seg_wnd, CONGESTION_WIN_SIZE);
+			ctx->snd_una = seg_ack;
+			ctx->snd_wnd = MIN(seg_wnd, CONGESTION_WIN_SIZE);
 
-		// If FIN-WAIT-1 & ACK is for our FIN, enter FIN-WAIT-2; RFC 793 [Page 73]
-		// It's a FIN ACK if ACK num equals our send-next num; RFC 793 [Page 39]
-		if (ctx->connection_state == FIN_WAIT_1 && seg_ack == ctx->snd_nxt) {
-			ctx->connection_state = FIN_WAIT_2;
+			// If FIN-WAIT-1 & ACK is for our FIN, enter FIN-WAIT-2; RFC 793 [Page 73]
+			// It's a FIN ACK if ACK num equals our send-next num; RFC 793 [Page 39]
+			if (ctx->connection_state == FIN_WAIT_1 && seg_ack == ctx->snd_nxt) {
+				ctx->connection_state = FIN_WAIT_2;
 
-			// IF CLOSING or LAST-ACK and this ACK is for our FIN, we're done (no
-			// TIME-WAIT in STCP); RFC 793 [Page 73]
-		} else if ((ctx->connection_state == CLOSING ||
-					ctx->connection_state == LAST_ACK) &&
-				   seg_ack == ctx->snd_nxt) {
+				// IF CLOSING or LAST-ACK and this ACK is for our FIN, we're done (no
+				// TIME-WAIT in STCP); RFC 793 [Page 73]
+			} else if ((ctx->connection_state == CLOSING ||
+						ctx->connection_state == LAST_ACK) &&
+					   seg_ack == ctx->snd_nxt) {
 			ctx->connection_state = CLOSED;
 			free(seg);
 			return;

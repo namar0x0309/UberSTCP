@@ -18,6 +18,7 @@
 #include "transport.h"
 
 #define FIXED_INITNUM 	// debug: start seq numbering from 1
+// #define DEBUG
 
 #define TCPHEADER_OFFSET    5
 #define HEADER_LEN          sizeof( STCPHeader)
@@ -73,7 +74,7 @@ typedef struct
 	char buf_snd[SENDER_WIN_SIZE];
 	char buf_rcv[RECEIVER_WIN_SIZE];
 	
-	// to avoid multiple reallocations		///TODO: use these instead of local variables
+	// to avoid multiple reallocations, use these instead of local variables
 	STCPHeader snd_h;  // construct header to send; handle data separately
 	
 } context_t;
@@ -95,8 +96,10 @@ void our_dprintf(const char *format,...);
  */
 void transport_init(mysocket_t sd, bool_t is_active)
 {
+#ifdef DEBUG		
     fflush(stdout);
 	printf( "\n%s", __FUNCTION__ );
+#endif
 
     context_t *ctx;
 
@@ -130,8 +133,8 @@ static void generate_initial_seq_num(context_t *ctx)
     /* please don't change this! */
     ctx->iss = 1;
 #else
-    /** Todo?  you have to fill this up */
-    /*ctx->iss =;*/
+    /** Todo:  change this to random? */
+    ctx->iss =1;
 #endif
 }
 
@@ -144,15 +147,18 @@ static void generate_initial_seq_num(context_t *ctx)
  */
 static void control_loop(mysocket_t sd, context_t *ctx)
 {
+#ifdef DEBUG		
 	printf( "\n%s", __FUNCTION__ );
+#endif
     assert(ctx);
     assert(!ctx->done);
 
-    while (!ctx->done) /* while ESTABLISHED */
+    while (!ctx->done) /// todo: change to while not CLOSED 
     {
-//		printf("\n\tnew event (%u|%u,%u)", ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
-//		printf("\n\t win = [%u,%u]", ctx->snd_wnd, ctx->rcv_wnd);
-		
+#ifdef DEBUG		
+		printf("\n\tnew event (%u|%u,%u)", ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
+		printf("\n\t win = [%u,%u]", ctx->snd_wnd, ctx->rcv_wnd);
+#endif		
 	    unsigned int event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
         /* check whether it was the network, app, or a close request */
@@ -180,7 +186,9 @@ static void control_loop(mysocket_t sd, context_t *ctx)
  /** todo: Sequence numbers need mod 2^32 arithmetic;  */
  void sendAppData(mysocket_t sd, context_t *ctx)
  {
+#ifdef DEBUG		
 	printf( "\n%s", __FUNCTION__ );
+#endif
 	char *payload;
 	size_t payload_len; /* how many bytes actually read from application */
 	ssize_t passed_bytes; /* how many bytes were able to send to network */
@@ -189,6 +197,11 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 	/* send data only if sender window is not full */
 	ssize_t send_capacity = ctx->snd_una + ctx->snd_wnd - ctx->snd_nxt;  /* rfc 793 [p. 83]*/
 	if( send_capacity > 0 ){
+#ifdef DEBUG		
+		printf("\n\t (%u|%u,%u)", ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
+		printf("\n\t [%u,%u]", ctx->snd_wnd, ctx->rcv_wnd);
+#endif
+
 		/* adjust max amount of data we can send*/
 		if (send_capacity > STCP_MSS) { send_capacity = STCP_MSS;}
      
@@ -219,7 +232,9 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 // /* Process a segment received from the network */
  void receiveNetworkSegment(mysocket_t sd, context_t *ctx) 
  {
+#ifdef DEBUG		
 	printf( "\n%s", __FUNCTION__ );
+#endif
 	
 	STCPHeader *rcv_h, *snd_h;
 	snd_h = &(ctx->snd_h);
@@ -250,12 +265,15 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     
     /* Extract info from received header */
     seg_len = seg_len_incl_hdr - TCP_DATA_START(seg);
+#ifdef DEBUG		
+	printf("\nSegment received, %ld, %u", seg_len, rcv_h->th_seq);
+#endif
 	seg_seq = rcv_h->th_seq;
     seg_ack = rcv_h->th_ack;
     seg_wnd = rcv_h->th_win;
     ctx->snd_wnd = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE ); /// TODO: This shouldn't go here in case it's a bad packet
 
-    // ESTABLISHED, FIN-WAIT-1, FIN-WAIT-2, CLOSE-WAIT, CLOSING, LAST-ACK, or TIME-WAIT state
+    // ESTABLISHED state, should be this one only; others are bundled up in teardownSequence()
     // RFC 793 [Page 69]
     
 	/* Check sequence number
@@ -281,12 +299,18 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 	/* Check the ACK field; RFC 793 [Page 72] */
 	if (rcv_h->th_flags & TH_ACK) {
 		seg_ack = rcv_h->th_ack;
-
+#ifdef DEBUG		
+		printf("\nProcessing ACK %u", seg_ack);
+#endif
+		
 		// If in the ESTABLISHED state
 		if (ctx->connection_state == ESTABLISHED) {
 
 			// If the ACK is within the send window, update the last unacknowledged byte and send window
 			if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
+#ifdef DEBUG		
+				printf("\nThe ACK is within the send window");
+#endif
 				ctx->snd_una = seg_ack;
 				ctx->snd_wnd = rcv_h->th_win;
 
@@ -301,11 +325,18 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 			free(seg);
 			return;
 		}
-		/// no timers here
+		
+#ifdef DEBUG		
+		printf("\nDone processing ACK");
+#endif
 	}
 
 	/* Process the segment data; RFC 793 [Page 74] */ /// TODO: Handle according to state
 	if (seg_len > 0) {
+#ifdef DEBUG		
+		printf("\nHandling received data beginning at sequence number %u,", seg_seq);
+#endif
+		
 		// assume window sizes were respected
 		payload = seg + TCP_DATA_START(seg);
 		stcp_app_send(sd, payload, seg_len);
@@ -315,6 +346,9 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 		ctx->rcv_nxt += seg_len;
 		fillHeader(snd_h, ctx, TH_ACK);
 		
+#ifdef DEBUG		
+		printf("\n Sending ACK, %u", ctx->rcv_nxt);
+#endif
 		stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 	 }
 
@@ -328,7 +362,9 @@ static void control_loop(mysocket_t sd, context_t *ctx)
  }
 
 void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
+#ifdef DEBUG		
 	printf( "\n%s", __FUNCTION__ );
+#endif
 	
 	STCPHeader *rcv_h, *snd_h;
     snd_h = &ctx->snd_h;
@@ -338,6 +374,9 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 	
     // Received OPEN call from application; RFC 793 [Page 54]
     if (is_active) {
+#ifdef DEBUG		
+		printf("\nActive: sending SYN");
+#endif
         ctx->connection_state = CLOSED;
 
         // Set up SYN header
@@ -376,6 +415,9 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 		/* Receive the segment and extract the header from it */
 		seg_len_incl_hdr = stcp_network_recv( sd, seg, seg_len_incl_hdr );
 		rcv_h = (STCPHeader*)seg;
+#ifdef DEBUG		
+		printf("\nPacket received");
+#endif
 
 		/* Extract info from received header */
 		seg_seq = rcv_h->th_seq;
@@ -393,7 +435,10 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 				 // Check for a SYN; Send SYNACK if received
 				 if (rcv_h->th_flags & TH_SYN) {
-
+#ifdef DEBUG		
+					printf("\nPassive: received SYN");
+#endif
+					
 					 // Update context fields
 					 ctx->rcv_nxt = seg_seq + 1;
 					 ctx->irs = seg_seq;
@@ -402,6 +447,9 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					 fillHeader(snd_h, ctx, TH_ACK | TH_SYN);
 					 
 					 // Send the SYNACK
+#ifdef DEBUG		
+					 printf("\nSending SYNACK"); fflush(stdout);
+#endif
 					 stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 
 					 // Update sequence numbers and connection state
@@ -439,11 +487,17 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					 if (ctx->snd_una > ctx->iss) {
 						 ctx->connection_state = ESTABLISHED;
 						 ctx->snd_wnd = seg_wnd;
+#ifdef DEBUG		
+						 printf("\n ESTABLISHED");
+#endif
 						 
 						// ACK the SYN/SYNACK just received
 						 fillHeader(snd_h, ctx, TH_ACK);
 						 
 						 // Send the ACK
+#ifdef DEBUG		
+						 printf("\n Sending ACK");
+#endif
 						 stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 						 
 					 // Otherwise, enter SYN_RECEIVED and send SYNACK
@@ -453,6 +507,9 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 						 fillHeader(snd_h, ctx, TH_ACK | TH_SYN);
 						 
 						 // Send the SYNACK
+#ifdef DEBUG		
+						 printf("\nSending SYNACK");
+#endif
 						 stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 
 						 // Update the connection state (already set snd_next and snd_una when we sent the SYN)
@@ -470,8 +527,11 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 				/* Check the ACK field; RFC 793 [Page 72] */
 				if (rcv_h->th_flags & TH_ACK) {
+#ifdef DEBUG		
+					printf("\nProcessing ACK %u", seg_ack);
+#endif
 					seg_ack = rcv_h->th_ack;
-				
+					
 					// If the ack is within the send window, enter ESTABLISHED state
 					if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
 						ctx->connection_state = ESTABLISHED;

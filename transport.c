@@ -82,7 +82,7 @@ static void control_loop(mysocket_t sd, context_t *ctx);
 static void receiveNetworkSegment(mysocket_t sd, context_t *ctx);
 void sendAppData(mysocket_t sd, context_t *ctx);
 void setupSequence(mysocket_t sd, context_t *ctx, bool is_active);
-void teardownSequence(mysocket_t sd, context_t *ctx, bool is_active);
+void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close);
 void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags);
 void our_dprintf(const char *format,...);
 
@@ -269,6 +269,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 	seg_seq = rcv_h->th_seq;
 	seg_ack = rcv_h->th_ack;
 	seg_wnd = rcv_h->th_win;
+	ctx->snd_wnd = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE ); /// TODO: Remove this if it doesn't cause errors
 
 	/* Check sequence number
      * If the segment contains data that comes after the next byte we're expecting,
@@ -279,6 +280,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		return;
 	}
 
+	// NASSIM: THIS MAY BE THE SECTION CAUSING THE ERROR, BUT WE DO NEED TO HANDLE THIS SCENARIO
 	// Trim off any portion of the data that we've already received
 	if (seg_seq < ctx->rcv_nxt) {
 		rcv_h->th_off -= (ctx->rcv_nxt - seg_seq);
@@ -299,11 +301,17 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 #ifdef DEBUG
 		printf("\nProcessing ACK %u", seg_ack);
 #endif
-		// Update the last unACKed byte and the send window
-		// We assume ACK is within the send window because STCP "doesn't
-		// care about sequence numbers in pure ACK packets"
-		ctx->snd_una = seg_ack;
-		ctx->snd_wnd = MIN(rcv_h->th_win, CONGESTION_WIN_SIZE);
+
+		// If in the ESTABLISHED state
+		if (ctx->connection_state == ESTABLISHED) {
+
+			// If the ACK is within the send window, update the last unacknowledged byte and send window
+			if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
+#ifdef DEBUG
+				printf("\nThe ACK is within the send window");
+#endif
+				ctx->snd_una = seg_ack;
+				ctx->snd_wnd = MIN(rcv_h->th_win, CONGESTION_WIN_SIZE);
 
 		// If FIN-WAIT-1 & ACK is for our FIN, enter FIN-WAIT-2; RFC 793 [Page 73]
 		// It's a FIN ACK if ACK num equals our send-next num; RFC 793 [Page 39]
@@ -461,6 +469,16 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 			 // RFC 793 [Page 66]
 			 } else if (ctx->connection_state == SYN_SENT) {
 
+				 // If this is an ACK
+				 if (rcv_h->th_flags & TH_ACK) {
+
+					// Ignore anything with an ack number outside the send window
+					if (seg_ack <= ctx->iss || seg_ack > ctx->snd_nxt || seg_ack < ctx->snd_una) {
+						/// todo: error, out-of-order packet in SYN_SENT
+						break;
+					}
+				 }
+
 				 // If this is a SYN (Simultaneous Connection)
 				 if (rcv_h->th_flags & TH_SYN) {
 					 ctx->rcv_nxt = seg_seq + 1;
@@ -518,12 +536,17 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 #endif
 					seg_ack = rcv_h->th_ack;
 
-					// Enter ESTABLISHED state, update the last unACKed byte & send wnd
-					// We assume ACK is within the send window because STCP "doesn't
-					// care about sequence numbers in pure ACK packets"
-					ctx->connection_state = ESTABLISHED;
-					ctx->snd_una = seg_ack;
-					ctx->snd_wnd = MIN( rcv_h->th_win, CONGESTION_WIN_SIZE );
+					// If the ack is within the send window, enter ESTABLISHED state
+					if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
+						ctx->connection_state = ESTABLISHED;
+						ctx->snd_wnd = seg_wnd;
+						ctx->snd_una = seg_ack;
+					// If the ACK is not acceptable, drop the packet and ignore
+					} else {
+						/// error: got out-of-order ACK in SYN_RECEIVED
+						continue;
+					}
+
 				}
 			}
 			
@@ -535,20 +558,18 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 	free(seg);
 }
 
-void teardownSequence(mysocket_t sd, context_t *ctx, bool is_active){
+void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 
 	STCPHeader *snd_h;
 	snd_h = &(ctx->snd_h);
 
-	// If active, we received a CLOSE call from the application
-	// Begin the FIN sequence or advance through as necessary; RFC 793 [Page 60]
-	if (is_active) {
+	// Received CLOSE call from app; begin or advance through FIN seq; RFC 793 [Page 60]
+	if (app_close) {
 		if (ctx->connection_state == ESTABLISHED ||
 			ctx->connection_state == CLOSE_WAIT) {
-			// We'll only receive the CLOSE call from the stcp_api once it has passed
-			// us all pending data to be sent (which we would have sent immediately),
-			// so we're ready to form a FIN segment and send it
-			fillHeader(snd_h, ctx, TH_FIN | TH_ACK); // TODO: [Page 39] of the RFC shows an ACK with every FIN; does the ACK part apply for STCP?
+
+			// All data from app has been sent; form FIN seg and send; RFC 793 [Page 39]
+			fillHeader(snd_h, ctx, TH_FIN | TH_ACK);
 #ifdef DEBUG
 			printf("\n Sending FIN, %u", ctx->rcv_nxt);
 #endif
@@ -564,8 +585,7 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool is_active){
 			// TODO: error in any other state
 		}
 
-		// Not active, so we must have received a packet with the FIN bit set
-		// Advance through the FIN sequence as necessary; RFC 793 [Page 75]
+		// Received packet with FIN bit set; advance through FIN seq; RFC 793 [Page 75]
 	} else {
 		// TODO: Advance RCV.NXT over the FIN
 		if (ctx->connection_state == ESTABLISHED) {

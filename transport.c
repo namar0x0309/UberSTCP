@@ -246,9 +246,8 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		/** error: connection terminated by remote host msg? */
 		free(seg);
 		return;
-	} else {
-		our_dprintf("\nSegment received. Length including header: %ld.", seg_len_incl_hdr);
-	}
+	} 
+	our_dprintf("\nSegment received. Length including header: %ld.", seg_len_incl_hdr);
 
 	rcv_h = (STCPHeader *) seg;
 
@@ -272,9 +271,9 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 
 	// NASSIM: THIS MAY BE THE SECTION CAUSING THE ERROR, BUT WE DO NEED TO HANDLE THIS SCENARIO
 	// Trim off any portion of the data that we've already received
-	if (seg_seq < ctx->rcv_nxt) {
+	if (seg_len > 0 && seg_seq < ctx->rcv_nxt) {
 		our_dprintf("\nTrimming off previously received data %u", seg_ack);
-		rcv_h->th_off -= (ctx->rcv_nxt - seg_seq);
+		// rcv_h->th_off += (ctx->rcv_nxt - seg_seq);
 		seg_len -= (ctx->rcv_nxt - seg_seq);
 		seg_seq = ctx->rcv_nxt;
 	}

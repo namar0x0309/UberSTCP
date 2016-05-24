@@ -259,17 +259,14 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 
 	our_dprintf("\n(seg_len, seg_seq): (%ld, %u)", seg_len, seg_seq);
 
-	/* Check sequence number
-     * If the segment contains data that comes after the next byte we're expecting,
-     * send error */
+	// If sequence number comes after next expected byte, send error
 	if (seg_len > 0 && seg_seq > ctx->rcv_nxt) {
 		// TODO: send error, received packet out of order
-		our_dprintf("\nSeq num: %u greater than next expected: %u.", seg_seq,  ctx->rcv_nxt);
+		our_dprintf("\nSeq num: %u past next expected: %u.", seg_seq,  ctx->rcv_nxt);
 		free(seg);
 		return;
 	}
 
-	// NASSIM: THIS MAY BE THE SECTION CAUSING THE ERROR, BUT WE DO NEED TO HANDLE THIS SCENARIO
 	// Trim off any portion of the data that we've already received
 	if (seg_len > 0 && seg_seq < ctx->rcv_nxt) {
 		our_dprintf("\nTrimming off previously received data %u", seg_ack);
@@ -285,8 +282,6 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		free(seg);
 		return;
 	}
-
-	our_dprintf("\nChecking for an ACK bit.");
 
 	// Check the ACK field; RFC 793 [Page 72]
 	if (rcv_h->th_flags & TH_ACK) {
@@ -321,7 +316,6 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		our_dprintf("\nDone processing ACK");
 	}
 
-	our_dprintf("\nStart processing the data. State is %i.", ctx->connection_state);
 	// Process the segment data; RFC 793 [Page 74]
 	if (seg_len > 0 && (
 			ctx->connection_state == ESTABLISHED ||

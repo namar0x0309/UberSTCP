@@ -593,15 +593,19 @@ void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags){
  */
 void our_dprintf(const char *format,...)
 {
+	if( !format ) return;
 #ifdef DEBUG
-    va_list argptr;
+    va_list valistArgs;
     char buffer[1024];
 
-    assert(format);
-    va_start(argptr, format);
-    vsnprintf(buffer, sizeof(buffer), format, argptr);
-    va_end(argptr);
+    va_start(valistArgs, format);
+    
+		vsnprintf(buffer, sizeof(buffer), format, valistArgs);
+    
+		va_end(valistArgs);
+		
     fputs(buffer, stdout);
+		
     fflush(stdout);
 #endif
 }

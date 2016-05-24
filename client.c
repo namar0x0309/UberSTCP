@@ -152,6 +152,10 @@ loop_until_end(int sd)
             while ((pline > line - 1) && isspace((int) (*pline)))
                 --pline;
 
+            // ****ADDED BY KELLY FOR TESTING****
+            if (line[0] == '.')
+                myclose(sd);
+
             if (pline <= line)
                 continue;
         }

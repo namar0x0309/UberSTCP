@@ -23,12 +23,10 @@
 
 #define TCPHEADER_OFFSET    5
 #define HEADER_LEN          sizeof( STCPHeader)
-#define OPTIONS_LEN         40			// max options length
 #define MAX_SEQUENCE_NUMBER 4294967296 /* this is 2^32 */ // REFACTOR
 #define CONGESTION_WIN_SIZE 3072
 #define RECEIVER_WIN_SIZE   3072
 #define SENDER_WIN_SIZE   	3072
-#define SYN_REC_DATA        10
 #define WAIT_TIME           4       // seconds
 
 
@@ -557,6 +555,7 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 	} else {
 
 		forcePrintf("\n\tTeardown - received FIN");
+
 		// Advance rcv_next over the FIN
 		ctx->rcv_nxt++;
 

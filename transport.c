@@ -342,7 +342,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
 	}
 
-	if (rcv_h->th_flags * TH_FIN) {
+	if (rcv_h->th_flags & TH_FIN) {
 		teardownSequence(sd, ctx, false);
 	}
 

@@ -211,6 +211,7 @@ void sendAppData(mysocket_t sd, context_t *ctx)
 		passed_bytes = stcp_network_send(sd, snd_h, HEADER_LEN, payload, payload_len, NULL);
 		if (passed_bytes < 0 ) { 
 			/// todo: error, network send failed
+			errno = ENETDOWN;
 		}
 		/*update next sequence number */
 		ctx->snd_nxt += payload_len;
@@ -245,6 +246,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 	seg_len_incl_hdr = stcp_network_recv(sd, seg, seg_len_incl_hdr);
 	if (seg_len_incl_hdr <= 0) {
 		/** error: connection terminated by remote host msg? */
+    errno = ECONNREFUSED;
 		free(seg);
 		return;
 	}
@@ -279,6 +281,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 	if (rcv_h->th_flags & TH_SYN) {
 		forcePrintf("\n\tPacket is a SYN, which shouldn't be coming in here.");
 		// TODO: set error, received SYN when payload expected
+		errno = ECONNRESET; // assuming connection has been reset due to new SYN packet
 		free(seg);
 		return;
 	}
@@ -310,6 +313,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 			}
 		} else {
 			// TODO: set error? ignore the ACK?
+			errno = ECONNRESET; // for all intents and purposes we lost context with peer, so akin to a reset. Must restart and rebuild context.
 			forcePrintf("\n\tThis ACK is outside the send window");
 		}
 	}
@@ -400,6 +404,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 		if (event & (APP_DATA | APP_CLOSE_REQUESTED)){
 			/// TODO: set error, wrong event flag in Syn-loop
+			errno = EISCONN;
 			break;
 		}
 		else if (event & NETWORK_DATA){
@@ -430,6 +435,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					// Anything other than a SYN in LISTEN state should be ignored in STCP
 				} else {
 					/// ToDO set error? got non-SYN packet in LISTEN
+					errno = ECONNRESET; // for all intents and purposes we lost context with peer, so akin to a reset. Must restart and rebuild context.
 					break;
 				}
 
@@ -487,6 +493,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 				// If this is a SYN, ignore the packet; RFC 793 [Page 71]
 				if (rcv_h->th_flags & TH_SYN) {
 					/// error?? got duplicate SYN in SYN_RECEIVED
+					errno = ECONNRESET; // for all intents and purposes we lost context with peer, so akin to a reset. Must restart and rebuild context.
 					continue;
 				}
 
@@ -504,6 +511,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 						// If the ACK is not acceptable, drop the packet and ignore
 					} else {
 						/// error: got out-of-order ACK in SYN_RECEIVED
+						errno = ECONNRESET; // for all intents and purposes we lost context with peer, so akin to a reset. Must restart and rebuild context.
 						continue;
 					}
 

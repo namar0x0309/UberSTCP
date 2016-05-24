@@ -384,7 +384,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 	
 	
 	char *seg;
-    ssize_t seg_len_incl_hdr= STCP_MSS;
+    ssize_t seg_len_incl_hdr= STCP_MSS + HEADER_LEN;
     seg = (char*)malloc( seg_len_incl_hdr * sizeof( char ) );
     assert( seg );
 

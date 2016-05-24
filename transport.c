@@ -312,7 +312,8 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 
 			// If FIN-WAIT-1 & ACK is for our FIN, enter FIN-WAIT-2; RFC 793 [Page 73]
 			// It's a FIN ACK if ACK num equals our send-next num; RFC 793 [Page 39]
-			if (ctx->connection_state == FIN_WAIT_1 && seg_ack == ctx->snd_nxt) {
+			if (ctx->connection_state == FIN_WAIT_1 &&
+				seg_ack == ctx->snd_nxt) {
 				ctx->connection_state = FIN_WAIT_2;
 
 				// IF CLOSING or LAST-ACK and this ACK is for our FIN, we're done (no
@@ -320,9 +321,12 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 			} else if ((ctx->connection_state == CLOSING ||
 						ctx->connection_state == LAST_ACK) &&
 					   seg_ack == ctx->snd_nxt) {
-			ctx->connection_state = CLOSED;
-			free(seg);
-			return;
+				ctx->connection_state = CLOSED;
+				free(seg);
+				return;
+			}
+		} else {
+			// TODO: set error? ignore the ACK?
 		}
 
 #ifdef DEBUG

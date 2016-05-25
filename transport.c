@@ -73,6 +73,9 @@ typedef struct
 	// to avoid multiple reallocations, use these instead of local variables
 	STCPHeader snd_h;  // construct header to send; handle data separately
 	
+	bool issmallendian;  // Check for endianess on this machine
+	bool issmallendianonpeer;  // Check for endianess on peer
+	
 } context_t;
 
 static void generate_initial_seq_num(context_t *ctx);
@@ -84,7 +87,15 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close);
 void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags);
 void forcePrintf(const char *format,...);
 
-// context_t *ctx;
+bool isSmallEndian()
+{
+	int n = 1;
+
+	if(*(char *)&n == 1) // little endian is true (left to right, so left byte is 00000001 )
+		return true;
+	else 
+		return false;
+}
 
 /* initialise the transport layer, and start the main loop, handling
  * any data from the peer or the application.  this function should not
@@ -92,7 +103,6 @@ void forcePrintf(const char *format,...);
  */
 void transport_init(mysocket_t sd, bool_t is_active)
 {
-
     fflush(stdout);
 	forcePrintf( "\n%s", __FUNCTION__ );
 
@@ -101,9 +111,12 @@ void transport_init(mysocket_t sd, bool_t is_active)
     ctx = (context_t    *) calloc(1, sizeof(context_t));
     assert(ctx);
 	
-	ctx->sd = sd;
+		ctx->sd = sd;
     ctx->rcv_wnd = RECEIVER_WIN_SIZE;
 
+		
+		ctx->issmallendian = isSmallEndian();
+		
     /** XXX: 
      * to communicate an error condition set errno appropriately (e.g. to
      * ECONNREFUSED, etc.) before unblocking.
@@ -252,6 +265,8 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 	}
 
 	rcv_h = (STCPHeader *) seg;
+	
+	// Check endianness 
 
 	// Extract info from received header
 	seg_len = seg_len_incl_hdr - TCP_DATA_START(seg);
@@ -396,6 +411,9 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 		/* Receive the segment and extract the header from it */
 		seg_len_incl_hdr = stcp_network_recv( sd, seg, seg_len_incl_hdr );
+		
+		
+		
 		rcv_h = (STCPHeader*)seg;
 		forcePrintf("\n\tSetup - packet received");
 

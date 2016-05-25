@@ -114,6 +114,7 @@ void transport_init(mysocket_t sd, bool_t is_active)
 	stcp_unblock_application(sd);
 	
 	control_loop(sd, ctx);
+    forcePrintf("\nExited the control loop");
     
 	/* do any cleanup here */
     free(ctx);
@@ -146,7 +147,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(ctx);
     assert(!ctx->done);
 
-    while (!ctx->done) /// todo: change to while not CLOSED -- I think it should be while not CLOSED or LAST-ACK
+    while (ctx->connection_state != CLOSED)
     {
 		forcePrintf("\n\nNew event (snd_una | snd_nxt, rcv_nxt): (%u | %u, %u)",
 					ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
@@ -244,6 +245,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 	seg_len_incl_hdr = stcp_network_recv(sd, seg, seg_len_incl_hdr);
 	if (seg_len_incl_hdr <= 0) {
 		/** error: connection terminated by remote host msg? */
+        forcePrintf("\n\tReceived seg_len_incl_hdr: %ld", seg_len_incl_hdr);
     errno = ECONNREFUSED;
 		free(seg);
 		return;
@@ -298,6 +300,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 			// It's a FIN ACK if ACK num equals our send-next num; RFC 793 [Page 39]
 			if (ctx->connection_state == FIN_WAIT_1 &&
 				seg_ack == ctx->snd_nxt) {
+                forcePrintf("\n\tReceived ACK was for our FIN. Entering FIN_WAI_2");
 				ctx->connection_state = FIN_WAIT_2;
 
 				// IF CLOSING or LAST-ACK and this ACK is for our FIN, we're done (no
@@ -305,6 +308,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 			} else if ((ctx->connection_state == CLOSING ||
 						ctx->connection_state == LAST_ACK) &&
 					   seg_ack == ctx->snd_nxt) {
+                forcePrintf("\n\tReceived ACK was for our FIN. We're done.");
 				ctx->connection_state = CLOSED;
 				free(seg);
 				return;
@@ -537,9 +541,10 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 			ctx->connection_state == CLOSE_WAIT) {
 
 			// All data from app has been sent; form FIN seg and send; RFC 793 [Page 39]
-			fillHeader(snd_h, ctx, TH_FIN | TH_ACK);
+			fillHeader(snd_h, ctx, TH_FIN);
 			forcePrintf("\n\tTeardown - sending FIN, %u", ctx->rcv_nxt);
 			stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
+            ctx->snd_nxt++;
 
 			// Update the state
 			if (ctx->connection_state == ESTABLISHED) {
@@ -556,16 +561,26 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 
 		forcePrintf("\n\tTeardown - received FIN");
 
-		// Advance rcv_next over the FIN
-		ctx->rcv_nxt++;
+        // Let the app know we received a FIN
+        stcp_fin_received(sd);
+
+        // Advance rcv_next over the FIN and send an ACK for the FIN
+        ctx->rcv_nxt++;
+        fillHeader(snd_h, ctx, TH_ACK);
+        forcePrintf("\n\tTeardown - sending FIN ACK %u", ctx->rcv_nxt);
+        stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
 
 		// Update the state
 		if (ctx->connection_state == ESTABLISHED) {
+            forcePrintf("\n\tTeardown - entering CLOSE_WAIT");
 			ctx->connection_state = CLOSE_WAIT;
-		} else if (ctx->connection_state == FIN_WAIT_1 ||
-				ctx->connection_state == FIN_WAIT_2) {
+		} else if (ctx->connection_state == FIN_WAIT_1) {
+            forcePrintf("\n\tTeardown - entering CLOSING");
 			ctx->connection_state = CLOSING;
-		}
+		} else if (ctx->connection_state == FIN_WAIT_2) {
+            forcePrintf("\n\tTeardown - entering CLOSED");
+            ctx->connection_state = CLOSED;
+        }
 	}
 }
 

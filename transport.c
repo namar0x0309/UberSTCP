@@ -18,7 +18,7 @@
 #include "stcp_api.h"
 #include "transport.h"
 
-#//define ENDIAN_CALIBRATE
+//#define ENDIAN_CALIBRATE
 #define FIXED_INITNUM 	// debug: start seq numbering from 1
 #define DEBUG
 
@@ -252,8 +252,6 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 
 	rcv_h = (STCPHeader *) seg;
 	
-	calibrateEndianness( seg, seg_len, true );	
-
 	// Extract info from received header
 	seg_len = seg_len_incl_hdr - TCP_DATA_START(seg);
 	seg_seq = rcv_h->th_seq;

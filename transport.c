@@ -18,6 +18,7 @@
 #include "stcp_api.h"
 #include "transport.h"
 
+#//define ENDIAN_CALIBRATE
 #define FIXED_INITNUM 	// debug: start seq numbering from 1
 #define DEBUG
 
@@ -72,10 +73,6 @@ typedef struct
 	
 	// to avoid multiple reallocations, use these instead of local variables
 	STCPHeader snd_h;  // construct header to send; handle data separately
-	
-	bool issmallendian;  // Check for endianess on this machine
-	bool issmallendianonpeer;  // Check for endianess on peer
-	
 } context_t;
 
 static void generate_initial_seq_num(context_t *ctx);
@@ -86,16 +83,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active);
 void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close);
 void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags);
 void forcePrintf(const char *format,...);
-
-bool isSmallEndian()
-{
-	int n = 1;
-
-	if(*(char *)&n == 1) // little endian is true (left to right, so left byte is 00000001 )
-		return true;
-	else 
-		return false;
-}
+void 	calibrateEndianness( char *seg, ssize_t seg_len, bool isFromNetwork );	
 
 /* initialise the transport layer, and start the main loop, handling
  * any data from the peer or the application.  this function should not
@@ -113,9 +101,6 @@ void transport_init(mysocket_t sd, bool_t is_active)
 	
 		ctx->sd = sd;
     ctx->rcv_wnd = RECEIVER_WIN_SIZE;
-
-		
-		ctx->issmallendian = isSmallEndian();
 		
     /** XXX: 
      * to communicate an error condition set errno appropriately (e.g. to
@@ -127,7 +112,6 @@ void transport_init(mysocket_t sd, bool_t is_active)
 	stcp_unblock_application(sd);
 	
 	control_loop(sd, ctx);
-    forcePrintf("\nExited the control loop");
     
 	/* do any cleanup here */
     free(ctx);
@@ -160,7 +144,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
     assert(ctx);
     assert(!ctx->done);
 
-    while (ctx->connection_state != CLOSED)
+    while (!ctx->done) /// todo: change to while not CLOSED -- I think it should be while not CLOSED or LAST-ACK
     {
 		forcePrintf("\n\nNew event (snd_una | snd_nxt, rcv_nxt): (%u | %u, %u)",
 					ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
@@ -220,6 +204,8 @@ void sendAppData(mysocket_t sd, context_t *ctx)
 		fillHeader(snd_h, ctx, 0);
 		
 		/* push both header and data to network */
+		calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
+		calibrateEndianness( payload, payload_len, false );
 		passed_bytes = stcp_network_send(sd, snd_h, HEADER_LEN, payload, payload_len, NULL);
 		if (passed_bytes < 0 ) { 
 			/// todo: error, network send failed
@@ -256,9 +242,9 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 
 	// Receive the segment
 	seg_len_incl_hdr = stcp_network_recv(sd, seg, seg_len_incl_hdr);
+	calibrateEndianness( seg, seg_len_incl_hdr, true );	
 	if (seg_len_incl_hdr <= 0) {
 		/** error: connection terminated by remote host msg? */
-        forcePrintf("\n\tReceived seg_len_incl_hdr: %ld", seg_len_incl_hdr);
     errno = ECONNREFUSED;
 		free(seg);
 		return;
@@ -266,7 +252,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 
 	rcv_h = (STCPHeader *) seg;
 	
-	// Check endianness 
+	calibrateEndianness( seg, seg_len, true );	
 
 	// Extract info from received header
 	seg_len = seg_len_incl_hdr - TCP_DATA_START(seg);
@@ -315,7 +301,6 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 			// It's a FIN ACK if ACK num equals our send-next num; RFC 793 [Page 39]
 			if (ctx->connection_state == FIN_WAIT_1 &&
 				seg_ack == ctx->snd_nxt) {
-                forcePrintf("\n\tReceived ACK was for our FIN. Entering FIN_WAI_2");
 				ctx->connection_state = FIN_WAIT_2;
 
 				// IF CLOSING or LAST-ACK and this ACK is for our FIN, we're done (no
@@ -323,7 +308,6 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 			} else if ((ctx->connection_state == CLOSING ||
 						ctx->connection_state == LAST_ACK) &&
 					   seg_ack == ctx->snd_nxt) {
-                forcePrintf("\n\tReceived ACK was for our FIN. We're done.");
 				ctx->connection_state = CLOSED;
 				free(seg);
 				return;
@@ -352,6 +336,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		fillHeader(snd_h, ctx, TH_ACK);
 
 		forcePrintf("\n\tReceive complete. Sending ACK %u", ctx->rcv_nxt);
+		calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 		stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
 	}
 
@@ -380,6 +365,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
         fillHeader(snd_h, ctx, TH_SYN);
         
         // Send the SYN
+				calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
         if( stcp_network_send( sd, snd_h, HEADER_LEN, NULL ) == -1  )
             errno = ECONNREFUSED;
         else {
@@ -411,8 +397,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 		/* Receive the segment and extract the header from it */
 		seg_len_incl_hdr = stcp_network_recv( sd, seg, seg_len_incl_hdr );
-		
-		
+		calibrateEndianness( seg, seg_len_incl_hdr, true );	
 		
 		rcv_h = (STCPHeader*)seg;
 		forcePrintf("\n\tSetup - packet received");
@@ -445,6 +430,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 					// Send the SYNACK
 					forcePrintf("\n\tSetup - sending SYNACK"); fflush(stdout);
+					calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 					stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 
 					// Update sequence numbers and connection state
@@ -490,6 +476,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 						// Send the ACK
 						forcePrintf("\n\tSetup - sending ACK");
+						calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 						stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 
 						// Otherwise, enter SYN_RECEIVED and send SYNACK
@@ -500,6 +487,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 						// Send the SYNACK
 						forcePrintf("\n\tSetup - sending SYNACK");
+						calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 						stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 
 						// Update the connection state (already set snd_next
@@ -559,10 +547,10 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 			ctx->connection_state == CLOSE_WAIT) {
 
 			// All data from app has been sent; form FIN seg and send; RFC 793 [Page 39]
-			fillHeader(snd_h, ctx, TH_FIN);
+			fillHeader(snd_h, ctx, TH_FIN | TH_ACK);
 			forcePrintf("\n\tTeardown - sending FIN, %u", ctx->rcv_nxt);
+			calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 			stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
-            ctx->snd_nxt++;
 
 			// Update the state
 			if (ctx->connection_state == ESTABLISHED) {
@@ -579,26 +567,16 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 
 		forcePrintf("\n\tTeardown - received FIN");
 
-        // Let the app know we received a FIN
-        stcp_fin_received(sd);
-
-        // Advance rcv_next over the FIN and send an ACK for the FIN
-        ctx->rcv_nxt++;
-        fillHeader(snd_h, ctx, TH_ACK);
-        forcePrintf("\n\tTeardown - sending FIN ACK %u", ctx->rcv_nxt);
-        stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
+		// Advance rcv_next over the FIN
+		ctx->rcv_nxt++;
 
 		// Update the state
 		if (ctx->connection_state == ESTABLISHED) {
-            forcePrintf("\n\tTeardown - entering CLOSE_WAIT");
 			ctx->connection_state = CLOSE_WAIT;
-		} else if (ctx->connection_state == FIN_WAIT_1) {
-            forcePrintf("\n\tTeardown - entering CLOSING");
+		} else if (ctx->connection_state == FIN_WAIT_1 ||
+				ctx->connection_state == FIN_WAIT_2) {
 			ctx->connection_state = CLOSING;
-		} else if (ctx->connection_state == FIN_WAIT_2) {
-            forcePrintf("\n\tTeardown - entering CLOSED");
-            ctx->connection_state = CLOSED;
-        }
+		}
 	}
 }
 
@@ -617,6 +595,32 @@ void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags){
 	snd_h->th_flags = 0 | flags;
 	snd_h->th_win = ctx->rcv_wnd;
 	snd_h->th_off = TCPHEADER_OFFSET;
+}
+
+/*
+	htons()	Host to Network Short
+	htonl()	Host to Network Long
+	ntohl()	Network to Host Long
+	ntohs()	Network to Host Short
+*/
+void 	calibrateEndianness( char *seg, ssize_t seg_len, bool isFromNetwork )	
+{
+#ifdef ENDIAN_CALIBRATE
+	if( isFromNetwork )
+	{
+		for( int i = 0; i < seg_len; ++i )
+		{
+			seg[ i ] = ntohl( seg[ i ] );
+		}
+	} 
+	else
+	{
+		for( int i = 0; i < seg_len; ++i )
+		{
+			seg[ i ] = htonl( seg[ i ] );
+		}
+	}
+#endif
 }
 
 // Forces stdout output

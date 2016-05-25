@@ -207,6 +207,9 @@ void sendAppData(mysocket_t sd, context_t *ctx)
 		calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 		calibrateEndianness( payload, payload_len, false );
 		passed_bytes = stcp_network_send(sd, snd_h, HEADER_LEN, payload, payload_len, NULL);
+		calibrateEndianness( payload, payload_len, true ); // restore endianess
+		calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
+		
 		if (passed_bytes < 0 ) { 
 			/// todo: error, network send failed
 			errno = ENETDOWN;
@@ -336,6 +339,8 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		forcePrintf("\n\tReceive complete. Sending ACK %u", ctx->rcv_nxt);
 		calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 		stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
+		calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
+		
 	}
 
 	if (rcv_h->th_flags & TH_FIN) {
@@ -365,8 +370,12 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
         // Send the SYN
 				calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
         if( stcp_network_send( sd, snd_h, HEADER_LEN, NULL ) == -1  )
+				{
             errno = ECONNREFUSED;
+						calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
+				}
         else {
+						calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
             ctx->snd_una = ctx->iss;
             ctx->snd_nxt = ctx->iss + 1;
             ctx->connection_state = SYN_SENT;
@@ -430,6 +439,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					forcePrintf("\n\tSetup - sending SYNACK"); fflush(stdout);
 					calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 					stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
+					calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
 
 					// Update sequence numbers and connection state
 					ctx->snd_nxt = ctx->iss + 1;
@@ -476,7 +486,8 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 						forcePrintf("\n\tSetup - sending ACK");
 						calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 						stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
-
+						calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
+						
 						// Otherwise, enter SYN_RECEIVED and send SYNACK
 					} else {
 
@@ -487,7 +498,8 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 						forcePrintf("\n\tSetup - sending SYNACK");
 						calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 						stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
-
+						calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
+						
 						// Update the connection state (already set snd_next
 						// and snd_una when we sent the SYN)
 						ctx->connection_state = SYN_RECEIVED;
@@ -549,6 +561,7 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 			forcePrintf("\n\tTeardown - sending FIN, %u", ctx->rcv_nxt);
 			calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
 			stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
+			calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
 
 			// Update the state
 			if (ctx->connection_state == ESTABLISHED) {
@@ -595,6 +608,20 @@ void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags){
 	snd_h->th_off = TCPHEADER_OFFSET;
 }
 
+const char *byte_to_binary(int x)
+{
+    static char b[17];
+    b[0] = '\0';
+
+    int z;
+    for (z = 256; z > 0; z >>= 1)
+    {
+        strcat(b, ((x & z) == z) ? "1" : "0");
+    }
+
+    return b;
+}
+
 /*
 	htons()	Host to Network Short
 	htonl()	Host to Network Long
@@ -604,18 +631,25 @@ void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags){
 void 	calibrateEndianness( char *seg, ssize_t seg_len, bool isFromNetwork )	
 {
 #ifdef ENDIAN_CALIBRATE
+	uint16_t temp;
 	if( isFromNetwork )
 	{
 		for( int i = 0; i < seg_len; ++i )
 		{
-			seg[ i ] = ntohl( seg[ i ] );
+			printf( "\nFrom:%s ", byte_to_binary( seg[ i ] ) );
+			temp = ntohl( seg[ i ] );
+			seg[ i ] = temp;
+			printf("to:%s", byte_to_binary(seg[ i ] ) );
 		}
 	} 
 	else
 	{
 		for( int i = 0; i < seg_len; ++i )
 		{
-			seg[ i ] = htonl( seg[ i ] );
+			printf( "\nFrom:%s ", byte_to_binary(seg[ i ] ) );
+			temp = htonl( seg[ i ] );
+			seg[ i ] = temp;
+			printf("to:%s", byte_to_binary( seg[ i ] ) );
 		}
 	}
 #endif

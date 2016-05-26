@@ -82,7 +82,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active);
 void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close);
 void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags);
 void forcePrintf(const char *format,...);
-void 	calibrateEndianness( char *seg, ssize_t seg_len, bool isFromNetwork );	
+void 	calibrateHeaderEndianness( STCPHeader *h, bool isFromNetwork );	
 
 /* initialise the transport layer, and start the main loop, handling
  * any data from the peer or the application.  this function should not
@@ -208,11 +208,8 @@ void sendAppData(mysocket_t sd, context_t *ctx)
 		fillHeader(snd_h, ctx, 0);
 		
 		/* push both header and data to network */
-		calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
-		calibrateEndianness( payload, payload_len, false );
+		calibrateHeaderEndianness( snd_h, false );	
 		passed_bytes = stcp_network_send(sd, snd_h, HEADER_LEN, payload, payload_len, NULL);
-		calibrateEndianness( payload, payload_len, true ); // restore endianess
-		calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
 		
 		if (passed_bytes < 0 ) {
 			errno = ENETDOWN;
@@ -248,7 +245,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 
 	// Receive the segment
 	seg_len_incl_hdr = stcp_network_recv(sd, seg, seg_len_incl_hdr);
-	calibrateEndianness( seg, seg_len_incl_hdr, true );	
+	
 	if (seg_len_incl_hdr <= 0) {
 		/** error: connection terminated by remote host msg? */
         forcePrintf("\n\tReceived seg_len_incl_hdr: %ld", seg_len_incl_hdr);
@@ -258,6 +255,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 	}
 
 	rcv_h = (STCPHeader *) seg;
+	calibrateHeaderEndianness( rcv_h, true );	
 	
 	// Extract info from received header
 	seg_len = seg_len_incl_hdr - TCP_DATA_START(seg);
@@ -342,10 +340,8 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		fillHeader(snd_h, ctx, TH_ACK);
 
 		forcePrintf("\n\tReceive complete. Sending ACK %u", ctx->rcv_nxt);
-		calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
+		calibrateHeaderEndianness( snd_h, false );	
 		stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
-		calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
-		
 	}
 
 	if (rcv_h->th_flags & TH_FIN) {
@@ -373,14 +369,11 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
         fillHeader(snd_h, ctx, TH_SYN);
         
         // Send the SYN
-				calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
-        if( stcp_network_send( sd, snd_h, HEADER_LEN, NULL ) == -1  )
-				{
+		calibrateHeaderEndianness(snd_h, false );	
+        if( stcp_network_send( sd, snd_h, HEADER_LEN, NULL ) == -1  ){
             errno = ECONNREFUSED;
-						calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
-				}
+		}
         else {
-						calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
             ctx->snd_una = ctx->iss;
             ctx->snd_nxt = ctx->iss + 1;
             ctx->connection_state = SYN_SENT;
@@ -409,9 +402,9 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 		/* Receive the segment and extract the header from it */
 		seg_len_incl_hdr = stcp_network_recv( sd, seg, seg_len_incl_hdr );
-		calibrateEndianness( seg, seg_len_incl_hdr, true );	
 		
 		rcv_h = (STCPHeader*)seg;
+		calibrateHeaderEndianness( rcv_h, true );	
 		forcePrintf("\n\tSetup - packet received");
 
 		/* Extract info from received header */
@@ -442,10 +435,9 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 					// Send the SYNACK
 					forcePrintf("\n\tSetup - sending SYNACK"); fflush(stdout);
-					calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
+					calibrateHeaderEndianness( snd_h, false );	
 					stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
-					calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
-
+					
 					// Update sequence numbers and connection state
 					ctx->snd_nxt = ctx->iss + 1;
 					ctx->snd_una = ctx->iss;
@@ -488,9 +480,8 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 						// Send the ACK
 						forcePrintf("\n\tSetup - sending ACK");
-						calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
+						calibrateHeaderEndianness(snd_h, false );	
 						stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
-						calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
 						
 						// Otherwise, enter SYN_RECEIVED and send SYNACK
 					} else {
@@ -500,9 +491,8 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 						// Send the SYNACK
 						forcePrintf("\n\tSetup - sending SYNACK");
-						calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
+						calibrateHeaderEndianness(snd_h, false );	
 						stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
-						calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
 						
 						// Update the connection state (already set snd_next
 						// and snd_una when we sent the SYN)
@@ -563,9 +553,8 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 			// All data from app has been sent; form FIN seg and send; RFC 793 [Page 39]
 			fillHeader(snd_h, ctx, TH_FIN);
 			forcePrintf("\n\tTeardown - sending FIN, %u", ctx->rcv_nxt);
-			calibrateEndianness( (char*)snd_h, HEADER_LEN, false );	
+			calibrateHeaderEndianness(snd_h, false );	
 			stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
-			calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
 			ctx->snd_nxt++;
 
 			// Update the state
@@ -624,49 +613,26 @@ void fillHeader(STCPHeader* snd_h, context_t *ctx, int flags){
 	snd_h->th_off = TCPHEADER_OFFSET;
 }
 
-const char *byte_to_binary(int x)
-{
-    static char b[17];
-    b[0] = '\0';
-
-    int z;
-    for (z = 256; z > 0; z >>= 1)
-    {
-        strcat(b, ((x & z) == z) ? "1" : "0");
-    }
-
-    return b;
-}
-
 /*
 	htons()	Host to Network Short
 	htonl()	Host to Network Long
 	ntohl()	Network to Host Long
 	ntohs()	Network to Host Short
 */
-void 	calibrateEndianness( char *seg, ssize_t seg_len, bool isFromNetwork )	
+void 	calibrateHeaderEndianness( STCPHeader *h, bool isFromNetwork )	
 {
 #ifdef ENDIAN_CALIBRATE
-	uint16_t temp;
 	if( isFromNetwork )
 	{
-		for( int i = 0; i < seg_len; ++i )
-		{
-			printf( "\nFrom:%s ", byte_to_binary( seg[ i ] ) );
-			temp = ntohl( seg[ i ] );
-			seg[ i ] = temp;
-			printf("to:%s", byte_to_binary(seg[ i ] ) );
-		}
+		h->th_seq = ntohl( h->th_seq );    /* sequence number */
+		h->th_ack = ntohl( h->th_ack );    /* acknowledgement number */
+		h->th_win = ntohs( h->th_win );    /* window */
 	} 
 	else
 	{
-		for( int i = 0; i < seg_len; ++i )
-		{
-			printf( "\nFrom:%s ", byte_to_binary(seg[ i ] ) );
-			temp = htonl( seg[ i ] );
-			seg[ i ] = temp;
-			printf("to:%s", byte_to_binary( seg[ i ] ) );
-		}
+		h->th_seq = htonl( h->th_seq );    /* sequence number */
+		h->th_ack = htonl( h->th_ack );    /* acknowledgement number */
+		h->th_win = htons( h->th_win );    /* window */	
 	}
 #endif
 }

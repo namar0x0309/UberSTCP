@@ -1,6 +1,7 @@
 ================================================
  README file for Project 3 - Simple TCP
     Names: Kelly Corrigan, Liza Kadochnikova, Nassim Amar
+	All members attended regular meetings,  participated in discussions and coding
 ================================================
 
 We decided to keep as close to the RFC documentation as we could,
@@ -11,14 +12,18 @@ If the connection receives anything unexpected, we set error and
 force stop (state => CLOSED). An exception to this are out-of-order
 packets, which are ignored.
 
+Initial Sequence Number randomization: we wanted to keep it small,
+to make sure that file transfer is not anywhere near overflowing 2^32;
+range of [1 .. 2^24] seemed sufficient.
+
 In development, we prioritized a focus on basic functionality first:
 the correct passing of messages. Since the scope of this assignment 
-didn't require extensive buffering (due the way wrapper code is 
-structured, with a data queue, and lack of access to event of 
+didn't require extensive buffering (due to the way wrapper code is 
+structured, with a data queue, and lack of easy access to the event of 
 applcation requesting a read in the api), we handled payload 
 transfer in-place. Thus limited buffering is made implicit 
 through window size management.
-Although the circular buffer api has bben written, it has not been 
+Although the circular buffer api has been written, it has not been 
 integrated into the final version because debugging basic functionality 
 took precedence over extensibiility concerns.
 
@@ -28,3 +33,9 @@ for a time, as opposed to having it busy-wait for response from the
 other end), as well as timed probing transmissions in case sender window is zero.
 
 (Liza: Didn't get to it, because debugging sucked the life out of me :p)
+
+Testing: 
+Tested first with client/server echo messages (file not found).
+Introduced a special input to force FIN-close sequence and debug it. 
+Tested file transfer with a range of file sizes up to 11.5 MB.
+Observed behavior for two simultaneous connections.

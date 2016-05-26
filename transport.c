@@ -28,7 +28,7 @@
 #define RECEIVER_WIN_SIZE   3072
 #define SENDER_WIN_SIZE   	3072
 #define WAIT_TIME           4       // seconds
-
+#define ISS_BOUND			16777216 // 2^24
 
 // RFC 793 [Page 21]
 enum {
@@ -130,8 +130,8 @@ static void generate_initial_seq_num(context_t *ctx)
 	// Initialize random seed
 	srand(time(NULL));
 
-	// Generate random number between 0 and 255, both inclusive
-    ctx->iss = rand() % 256;
+	// Generate random number between 1 and ISS_BOUND;
+    ctx->iss = rand() % ISS_BOUND + 1;
 #endif
 }
 

@@ -18,9 +18,9 @@
 #include "stcp_api.h"
 #include "transport.h"
 
-#define ENDIAN_CALIBRATE
-//#define FIXED_INITNUM 	// debug: start seq numbering from 1
-//#define DEBUG
+#define ENDIAN_CALIBRATE	// this must be defined to handle byte order
+//#define FIXED_INITNUM 	// for debug: start seq numbering from 1
+//#define DEBUG				// printouts are hiding behind this
 
 #define TCPHEADER_OFFSET    5
 #define HEADER_LEN          sizeof( STCPHeader)

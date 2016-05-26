@@ -58,17 +58,17 @@ typedef struct
     /* Send Sequence Variables; RFC 793 [Page 25] */
     tcp_seq snd_una;        // oldest unacknowledged sequence number
     tcp_seq snd_nxt;        // next sequence number to be sent
-    unsigned int snd_wnd;   // send window
+    uint16_t snd_wnd;   // send window
     tcp_seq iss;
 
     /* Receive Sequence Variables RFC 793 [Page 25] */
     tcp_seq rcv_nxt;        // next seq num expected on rcvd sgmt; left edge of rcv wnd
-    unsigned int rcv_wnd;   // receive window
+    uint16_t rcv_wnd;   // receive window
     tcp_seq irs;            // initial receive sequence number
 
 	// buffers :
-	char buf_snd[SENDER_WIN_SIZE];
-	char buf_rcv[RECEIVER_WIN_SIZE];
+	// char buf_snd[SENDER_WIN_SIZE];
+	// char buf_rcv[RECEIVER_WIN_SIZE];
 	
 	// to avoid multiple reallocations, use these instead of local variables
 	STCPHeader snd_h;  // construct header to send; handle data separately

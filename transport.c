@@ -18,9 +18,9 @@
 #include "stcp_api.h"
 #include "transport.h"
 
-//#define ENDIAN_CALIBRATE
+#define ENDIAN_CALIBRATE
 //#define FIXED_INITNUM 	// debug: start seq numbering from 1
-#define DEBUG
+//#define DEBUG
 
 #define TCPHEADER_OFFSET    5
 #define HEADER_LEN          sizeof( STCPHeader)
@@ -213,6 +213,7 @@ void sendAppData(mysocket_t sd, context_t *ctx)
 		
 		if (passed_bytes < 0 ) {
 			errno = ENETDOWN;
+			ctx->connection_state = CLOSED;
 		}
 		/*update next sequence number */
 		ctx->snd_nxt += payload_len;
@@ -249,7 +250,8 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 	if (seg_len_incl_hdr <= 0) {
 		/** error: connection terminated by remote host msg? */
         forcePrintf("\n\tReceived seg_len_incl_hdr: %ld", seg_len_incl_hdr);
-    errno = ECONNREFUSED;
+		errno = ECONNREFUSED;
+		ctx->connection_state = CLOSED;
 		free(seg);
 		return;
 	}
@@ -286,6 +288,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		forcePrintf("\n\tPacket is a SYN, which shouldn't be coming in here.");
 		// TODO: set error, received SYN when payload expected
 		errno = ECONNRESET; // assuming connection has been reset due to new SYN packet
+//		ctx->connection_state = CLOSED;
 		free(seg);
 		return;
 	}
@@ -402,7 +405,14 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 		/* Receive the segment and extract the header from it */
 		seg_len_incl_hdr = stcp_network_recv( sd, seg, seg_len_incl_hdr );
-		
+		if (seg_len_incl_hdr <= 0) {
+			/** error: connection terminated by remote host msg? */
+			forcePrintf("\n\tReceived seg_len_incl_hdr: %ld", seg_len_incl_hdr);
+			errno = ECONNREFUSED;
+			ctx->connection_state = CLOSED;
+			free(seg);
+			return;
+		}
 		rcv_h = (STCPHeader*)seg;
 		calibrateHeaderEndianness( rcv_h, true );	
 		forcePrintf("\n\tSetup - packet received");
@@ -415,6 +425,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 		if (event & (APP_DATA | APP_CLOSE_REQUESTED)){
 			/// TODO: set error, wrong event flag in Syn-loop
 			errno = EISCONN;
+			ctx->connection_state = CLOSED;
 			break;
 		}
 		else if (event & NETWORK_DATA){
@@ -446,6 +457,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					// Anything other than a SYN in LISTEN state should be ignored in STCP
 				} else {
 					errno = ECONNRESET; // for all intents and purposes we lost context with peer, so akin to a reset. Must restart and rebuild context.
+					ctx->connection_state = CLOSED;
 					break;
 				}
 
@@ -524,6 +536,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					} else {
 						/// error: got out-of-order ACK in SYN_RECEIVED
 						errno = ECONNRESET; // for all intents and purposes we lost context with peer, so akin to a reset. Must restart and rebuild context.
+//						ctx->connection_state = CLOSED;
 						continue;
 					}
 
@@ -580,7 +593,8 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
         ctx->rcv_nxt++;
         fillHeader(snd_h, ctx, TH_ACK);
         forcePrintf("\n\tTeardown - sending FIN ACK %u", ctx->rcv_nxt);
-        stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
+        calibrateHeaderEndianness(snd_h, false);
+		stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
 
 		// Update the state
 		if (ctx->connection_state == ESTABLISHED) {

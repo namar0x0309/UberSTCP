@@ -1,6 +1,30 @@
 ================================================
  README file for Project 3 - Simple TCP
-           Name(s): 
+    Names: Kelly Corrigan, Liza Kadochnikova, Nassim Amar
 ================================================
 
-DESCRIBE YOUR CODE AND DESIGN DECISIONS HERE
+We decided to keep as close to the RFC documentation as we could,
+so we adopted the state machine described in RFC 793, albeit simplified
+(since we did not have to handle certain cases, such as connection reset)
+
+If the connection receives anything unexpected, we set error and
+force stop (state => CLOSED). An exception to this are out-of-order
+packets, which are ignored.
+
+In development, we prioritized a focus on basic functionality first:
+the correct passing of messages. Since the scope of this assignment 
+didn't require extensive buffering (due the way wrapper code is 
+structured, with a data queue, and lack of access to event of 
+applcation requesting a read in the api), we handled payload 
+transfer in-place. Thus limited buffering is made implicit 
+through window size management.
+Although the circular buffer api has bben written, it has not been 
+integrated into the final version because debugging basic functionality 
+took precedence over extensibiility concerns.
+
+Another part that we thought about impementing was supressing APP_DATA
+event detection in case the send window size is zero (to sleep the thread
+for a time, as opposed to having it busy-wait for response from the 
+other end), as well as timed probing transmissions in case sender window is zero.
+
+(Liza: Didn't get to it, because debugging sucked the life out of me :p)

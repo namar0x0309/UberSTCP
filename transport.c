@@ -150,25 +150,24 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 
     while (!ctx->done) /// todo: change to while not CLOSED -- I think it should be while not CLOSED or LAST-ACK
     {
-		our_dprintf("\n\nNew event (snd_una | snd_nxt, rcv_nxt): (%u | %u, %u)",
-					ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
-		our_dprintf("\n\t[snd_wnd,rcv_wnd] = [%u,%u]", ctx->snd_wnd, ctx->rcv_wnd);
+		our_dprintf("\n\tnew event (%u|%u,%u)", ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
+		our_dprintf("\n\t win = [%u,%u]", ctx->snd_wnd, ctx->rcv_wnd);
 	    unsigned int event = stcp_wait_for_event(sd, ANY_EVENT, NULL);
 
         /* check whether it was the network, app, or a close request */
         if (event & APP_DATA){
             /* the application has requested that data be sent */
-            our_dprintf("\nSend triggered ");
+            our_dprintf("\nApp data available to send");
             sendAppData(sd, ctx);
         }
 
          if (event & NETWORK_DATA){
-            our_dprintf("\nReceive triggered ");
+            our_dprintf("\nNetwork data available to receive");
             receiveNetworkSegment(sd, ctx);
         }
 
          if (event & APP_CLOSE_REQUESTED ){
-			 our_dprintf("\nTeardown triggered - app close requested ");
+			 our_dprintf("\nNetwork close requested");
 			 teardownSequence(sd, ctx, true);
         }
     }
@@ -180,7 +179,7 @@ static void control_loop(mysocket_t sd, context_t *ctx)
 /** todo: Sequence numbers need mod 2^32 arithmetic;  */
 void sendAppData(mysocket_t sd, context_t *ctx)
 {
-	our_dprintf( "---> %s", __FUNCTION__ );
+	our_dprintf( "\n%s", __FUNCTION__ );
 	char *payload;
 	size_t payload_len; /* how many bytes actually read from application */
 	ssize_t passed_bytes; /* how many bytes were able to send to network */
@@ -189,9 +188,8 @@ void sendAppData(mysocket_t sd, context_t *ctx)
 	/* send data only if sender window is not full */
 	ssize_t send_capacity = ctx->snd_una + ctx->snd_wnd - ctx->snd_nxt;  /* rfc 793 [p. 83]*/
 	if( send_capacity > 0 ){
-		our_dprintf("\n\t Send - (snd_una | snd_nxt, rcv_nxt): (%u | %u, %u)",
-					ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
-		our_dprintf("\n\t Send - [snd_wnd,rcv_wnd]: [%u,%u]", ctx->snd_wnd, ctx->rcv_wnd);
+		our_dprintf("\n\t (%u|%u,%u)", ctx->snd_una, ctx->snd_nxt, ctx->rcv_nxt);
+		our_dprintf("\n\t [%u,%u]", ctx->snd_wnd, ctx->rcv_wnd);
 
 		/* adjust max amount of data we can send*/
 		if (send_capacity > STCP_MSS) { send_capacity = STCP_MSS;}
@@ -223,7 +221,8 @@ void sendAppData(mysocket_t sd, context_t *ctx)
 // /* Process a segment received from the network */
 void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 {
-	our_dprintf( "---> %s", __FUNCTION__ );
+	our_dprintf( "\n%s", __FUNCTION__ );
+
 	STCPHeader *rcv_h, *snd_h;
 	snd_h = &(ctx->snd_h);
 
@@ -247,7 +246,8 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		/** error: connection terminated by remote host msg? */
 		free(seg);
 		return;
-	}
+	} 
+	our_dprintf("\nSegment received. Length including header: %ld.", seg_len_incl_hdr);
 
 	rcv_h = (STCPHeader *) seg;
 
@@ -257,7 +257,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 	seg_ack = rcv_h->th_ack;
 	seg_wnd = rcv_h->th_win;
 
-	our_dprintf("\n\tReceived (len, seq): (%ld, %u)", seg_len, seg_seq);
+	our_dprintf("\n(seg_len, seg_seq): (%ld, %u)", seg_len, seg_seq);
 
 	// If sequence number comes after next expected byte, send error
 	if (seg_len > 0 && seg_seq > ctx->rcv_nxt) {
@@ -269,7 +269,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 
 	// Trim off any portion of the data that we've already received
 	if (seg_len > 0 && seg_seq < ctx->rcv_nxt) {
-		our_dprintf("\n\tTrimming off previously received data %u", seg_ack);
+		our_dprintf("\nTrimming off previously received data %u", seg_ack);
 		// rcv_h->th_off += (ctx->rcv_nxt - seg_seq);
 		seg_len -= (ctx->rcv_nxt - seg_seq);
 		seg_seq = ctx->rcv_nxt;
@@ -277,7 +277,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 
 	// If this is a SYN, ignore the packet; RFC 793 [Page 71]
 	if (rcv_h->th_flags & TH_SYN) {
-		our_dprintf("\n\tPacket is a SYN, which shouldn't be coming in here.");
+		our_dprintf("\nPacket is a SYN, which shouldn't be coming in here.");
 		// TODO: set error, received SYN when payload expected
 		free(seg);
 		return;
@@ -286,10 +286,11 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 	// Check the ACK field; RFC 793 [Page 72]
 	if (rcv_h->th_flags & TH_ACK) {
 		seg_ack = rcv_h->th_ack;
-		our_dprintf("\n\tReceived ACK %u", seg_ack);
+		our_dprintf("\nProcessing ACK %u", seg_ack);
 
 		// If ACK is within the send wnd, update last unACKed byte and send wnd
 		if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
+			our_dprintf("\nThe ACK is within the send window");
 			ctx->snd_una = seg_ack;
 			ctx->snd_wnd = MIN(seg_wnd, CONGESTION_WIN_SIZE);
 
@@ -310,8 +311,9 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 			}
 		} else {
 			// TODO: set error? ignore the ACK?
-			our_dprintf("\n\tThis ACK is outside the send window");
 		}
+
+		our_dprintf("\nDone processing ACK");
 	}
 
 	// Process the segment data; RFC 793 [Page 74]
@@ -319,7 +321,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 			ctx->connection_state == ESTABLISHED ||
 			ctx->connection_state == FIN_WAIT_1 ||
 			ctx->connection_state == FIN_WAIT_2)) {
-		our_dprintf("\n\tReceived data processing: (%ld, %u)", seg_len, seg_seq);
+		our_dprintf("\nHandling received data beginning at sequence number %u,", seg_seq);
 
 		// assume window sizes were respected
 		payload = seg + TCP_DATA_START(seg);
@@ -330,7 +332,7 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 		ctx->rcv_nxt += seg_len;
 		fillHeader(snd_h, ctx, TH_ACK);
 
-		our_dprintf("\n\tReceive complete. Sending ACK %u", ctx->rcv_nxt);
+		our_dprintf("\n Sending ACK, %u", ctx->rcv_nxt);
 		stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
 	}
 
@@ -352,7 +354,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 	
     // Received OPEN call from application; RFC 793 [Page 54]
     if (is_active) {
-		our_dprintf("\n\tSetup - active: sending SYN");
+		our_dprintf("\nActive: sending SYN");
         ctx->connection_state = CLOSED;
 
         // Set up SYN header
@@ -391,7 +393,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 		/* Receive the segment and extract the header from it */
 		seg_len_incl_hdr = stcp_network_recv( sd, seg, seg_len_incl_hdr );
 		rcv_h = (STCPHeader*)seg;
-		our_dprintf("\n\tSetup - packet received");
+		our_dprintf("\nPacket received");
 
 		/* Extract info from received header */
 		seg_seq = rcv_h->th_seq;
@@ -409,7 +411,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 				// Check for a SYN; Send SYNACK if received
 				if (rcv_h->th_flags & TH_SYN) {
-					our_dprintf("\n\tSetup - passive: received SYN");
+					our_dprintf("\nPassive: received SYN");
 
 					// Update context fields
 					ctx->rcv_nxt = seg_seq + 1;
@@ -419,7 +421,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					fillHeader(snd_h, ctx, TH_ACK | TH_SYN);
 
 					// Send the SYNACK
-					our_dprintf("\n\tSetup - sending SYNACK"); fflush(stdout);
+					our_dprintf("\nSending SYNACK"); fflush(stdout);
 					stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 
 					// Update sequence numbers and connection state
@@ -457,13 +459,13 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 					if (ctx->snd_una > ctx->iss) {
 						ctx->connection_state = ESTABLISHED;
 						ctx->snd_wnd = MIN(seg_wnd, CONGESTION_WIN_SIZE);
-						our_dprintf("\n\tSetup - ESTABLISHED; ISS: %u", ctx->iss);
+						our_dprintf("\nESTABLISHED");
 
 						// ACK the SYN/SYNACK just received
 						fillHeader(snd_h, ctx, TH_ACK);
 
 						// Send the ACK
-						our_dprintf("\n\tSetup - sending ACK");
+						our_dprintf("\nSending ACK");
 						stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 
 						// Otherwise, enter SYN_RECEIVED and send SYNACK
@@ -473,7 +475,7 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 						fillHeader(snd_h, ctx, TH_ACK | TH_SYN);
 
 						// Send the SYNACK
-						our_dprintf("\n\tSetup - sending SYNACK");
+						our_dprintf("\nSending SYNACK");
 						stcp_network_send( sd, snd_h, HEADER_LEN, NULL );
 
 						// Update the connection state (already set snd_next
@@ -492,13 +494,13 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 				/* Check the ACK field; RFC 793 [Page 72] */
 				if (rcv_h->th_flags & TH_ACK) {
-					our_dprintf("\n\tSetup - processing ACK %u", seg_ack);
+					our_dprintf("\nProcessing ACK %u", seg_ack);
 					seg_ack = rcv_h->th_ack;
 
 					// If the ack is within the send window, enter ESTABLISHED state
 					if (ctx->snd_una < seg_ack && seg_ack <= ctx->snd_nxt) {
 						ctx->connection_state = ESTABLISHED;
-						our_dprintf("\n\tSetup - ESTABLISHED; ISS: %u", ctx->iss);
+						our_dprintf("\nESTABLISHED");
 						ctx->snd_wnd = MIN(seg_wnd, CONGESTION_WIN_SIZE);
 						ctx->snd_una = seg_ack;
 						// If the ACK is not acceptable, drop the packet and ignore
@@ -520,8 +522,6 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 
-	our_dprintf( "---> %s", __FUNCTION__ );
-
 	STCPHeader *snd_h;
 	snd_h = &(ctx->snd_h);
 
@@ -532,7 +532,7 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 
 			// All data from app has been sent; form FIN seg and send; RFC 793 [Page 39]
 			fillHeader(snd_h, ctx, TH_FIN | TH_ACK);
-			our_dprintf("\n\tTeardown - sending FIN, %u", ctx->rcv_nxt);
+			our_dprintf("\n Sending FIN, %u", ctx->rcv_nxt);
 			stcp_network_send(sd, snd_h, HEADER_LEN, NULL);
 
 			// Update the state
@@ -548,7 +548,6 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 		// Received packet with FIN bit set; advance through FIN seq; RFC 793 [Page 75]
 	} else {
 
-		our_dprintf("\n\tTeardown - received FIN");
 		// Advance rcv_next over the FIN
 		ctx->rcv_nxt++;
 

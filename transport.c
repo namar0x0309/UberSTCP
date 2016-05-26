@@ -19,12 +19,11 @@
 #include "transport.h"
 
 //#define ENDIAN_CALIBRATE
-#define FIXED_INITNUM 	// debug: start seq numbering from 1
+//#define FIXED_INITNUM 	// debug: start seq numbering from 1
 #define DEBUG
 
 #define TCPHEADER_OFFSET    5
 #define HEADER_LEN          sizeof( STCPHeader)
-#define MAX_SEQUENCE_NUMBER 4294967296 /* this is 2^32 */ // REFACTOR
 #define CONGESTION_WIN_SIZE 3072
 #define RECEIVER_WIN_SIZE   3072
 #define SENDER_WIN_SIZE   	3072
@@ -127,8 +126,12 @@ static void generate_initial_seq_num(context_t *ctx)
     /* please don't change this! */
     ctx->iss = 1;
 #else
-    /** Todo:  change this to random? */
-    ctx->iss =1;
+
+	// Initialize random seed
+	srand(time(NULL));
+
+	// Generate random number between 0 and 255, both inclusive
+    ctx->iss = rand() % 256;
 #endif
 }
 
@@ -211,8 +214,7 @@ void sendAppData(mysocket_t sd, context_t *ctx)
 		calibrateEndianness( payload, payload_len, true ); // restore endianess
 		calibrateEndianness( (char*)snd_h, HEADER_LEN, true );	// restore endianess
 		
-		if (passed_bytes < 0 ) { 
-			/// todo: error, network send failed
+		if (passed_bytes < 0 ) {
 			errno = ENETDOWN;
 		}
 		/*update next sequence number */
@@ -318,7 +320,6 @@ void receiveNetworkSegment(mysocket_t sd, context_t *ctx)
 				return;
 			}
 		} else {
-			// TODO: set error? ignore the ACK?
 			errno = ECONNRESET; // for all intents and purposes we lost context with peer, so akin to a reset. Must restart and rebuild context.
 			forcePrintf("\n\tThis ACK is outside the send window");
 		}
@@ -452,7 +453,6 @@ void setupSequence(mysocket_t sd, context_t *ctx, bool is_active){
 
 					// Anything other than a SYN in LISTEN state should be ignored in STCP
 				} else {
-					/// ToDO set error? got non-SYN packet in LISTEN
 					errno = ECONNRESET; // for all intents and purposes we lost context with peer, so akin to a reset. Must restart and rebuild context.
 					break;
 				}
@@ -575,7 +575,8 @@ void teardownSequence(mysocket_t sd, context_t *ctx, bool app_close){
 				ctx->connection_state = LAST_ACK;
 			}
 		} else {
-			// TODO: error in any other state
+			errno = ECONNABORTED;
+			ctx->connection_state = CLOSED;
 		}
 
 		// Received packet with FIN bit set; advance through FIN seq; RFC 793 [Page 75]
